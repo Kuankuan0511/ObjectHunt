@@ -62,8 +62,8 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            // Location permission granted -> fetch city
-            viewModel.fetchCurrentLocation(this)
+            // Use applicationContext inside ViewModel - no need to pass Activity
+            viewModel.fetchCurrentLocation()
         } else {
             Toast.makeText(this, "Location permission denied. Can't get city.", Toast.LENGTH_SHORT).show()
         }
@@ -80,20 +80,16 @@ class MainActivity : ComponentActivity() {
         if (!cameraGranted) {
             Toast.makeText(this, "Camera permission denied", Toast.LENGTH_SHORT).show()
         }
-        if (locationGranted) {
-            // If location granted at launch, we can pre-fetch city in background
-            // viewModel.fetchCurrentLocation(this) // optional: fetch immediately
-        }
+        // Location granted at launch - optionally pre-fetch city using applicationContext
+        // No Activity context needed anymore
     }
     
     private val takePictureLauncher = registerForActivityResult(
         ActivityResultContracts.TakePicturePreview()
     ) { bitmap ->
         bitmap?.let {
-            // Delegate to ViewModel for pigeon detection
             viewModel.onPhotoCaptured(it)
-            // Fetch current city silently - DO NOT prompt during analyzing
-            // Permission was already requested at app launch
+            // Silent fetch using applicationContext inside ViewModel
             fetchCityIfPermittedSilent()
         }
     }
@@ -115,13 +111,12 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Silent version - only fetches if permission already granted.
-     * No permission dialog during analyzing.
+     * Uses applicationContext inside ViewModel, no Activity context passed.
      */
     private fun fetchCityIfPermittedSilent() {
         if (hasLocationPermission()) {
-            viewModel.fetchCurrentLocation(this)
+            viewModel.fetchCurrentLocation() // no context arg - uses applicationContext internally
         }
-        // else: do nothing, don't prompt here. User was already prompted at launch.
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -146,7 +141,6 @@ class MainActivity : ComponentActivity() {
             missingPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         if (missingPermissions.isNotEmpty()) {
-            // Request both at once at launch
             requestMultiplePermissionsLauncher.launch(missingPermissions.toTypedArray())
         }
         

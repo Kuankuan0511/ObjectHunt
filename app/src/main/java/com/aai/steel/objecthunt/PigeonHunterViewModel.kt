@@ -1,12 +1,12 @@
 package com.aai.steel.objecthunt
 
 import android.annotation.SuppressLint
-import android.content.Context
+import android.app.Application
 import android.location.Geocoder
 import android.os.Build
 import android.graphics.Bitmap
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -19,11 +19,9 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * UI State for the Pigeon Hunter screen
- * Using a data class with copy() for easy state updates
  */
 data class PigeonHunterUiState(
     val capturedBitmap: Bitmap? = null,
@@ -36,14 +34,14 @@ data class PigeonHunterUiState(
 )
 
 /**
- * ViewModel for Pigeon Hunter feature
- * Uses init block instead of a Factory in Activity.
- * Repository is created here so Activity can just do: by viewModels()
+ * ViewModel using ApplicationContext instead of Activity Context.
+ * Extends AndroidViewModel so we can get applicationContext via getApplication().
+ * This avoids memory leaks from holding an Activity reference.
  */
-class PigeonHunterViewModel : ViewModel() {
+class PigeonHunterViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: PigeonRepository
-    private var isLocationPermissionGranted = false
+    private val appContext = getApplication<Application>().applicationContext
 
     init {
         val apiService = PigeonRepository.createApiService()
@@ -52,18 +50,12 @@ class PigeonHunterViewModel : ViewModel() {
             apiKey = BuildConfig.MUSE_API_KEY,
             model = BuildConfig.MUSE_API_MODEL
         )
-        Log.d("PigeonHunterVM", "ViewModel init - repo created with model ${BuildConfig.MUSE_API_MODEL}")
+        Log.d("PigeonHunterVM", "ViewModel init with applicationContext - model ${BuildConfig.MUSE_API_MODEL}")
     }
     
-    // Private mutable state
     private val _uiState = MutableStateFlow(PigeonHunterUiState())
-    
-    // Public immutable state (exposed to UI)
     val uiState: StateFlow<PigeonHunterUiState> = _uiState.asStateFlow()
     
-    /**
-     * Called when user takes a photo
-     */
     fun onPhotoCaptured(bitmap: Bitmap) {
         Log.d("PigeonHunterVM", "Photo captured, starting analysis")
         _uiState.value = _uiState.value.copy(
@@ -71,28 +63,15 @@ class PigeonHunterViewModel : ViewModel() {
             isAnalyzing = true,
             pigeonResult = null,
             errorMessage = null
-            // Keep existing location if already fetched, don't clear it
         )
-        
-        // Start analysis in background
         analyzePhoto(bitmap)
     }
 
-    fun setIsLocationPermissionGranted (isGranted: Boolean) {
-        this.isLocationPermissionGranted = isGranted
-    }
-
-    /**
-     * Called when user wants to take another photo
-     */
     fun onRetakePhoto() {
         Log.d("PigeonHunterVM", "Resetting for new photo")
         _uiState.value = PigeonHunterUiState()
     }
     
-    /**
-     * Analyze the photo using Repository (which calls Muse API)
-     */
     private fun analyzePhoto(bitmap: Bitmap) {
         viewModelScope.launch {
             try {
@@ -103,7 +82,6 @@ class PigeonHunterViewModel : ViewModel() {
                     pigeonResult = result,
                     isAnalyzing = false
                 )
-                
                 Log.d("PigeonHunterVM", "Analysis complete. Has pigeon: ${result.hasPigeon}")
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Error analyzing image", e)
@@ -125,28 +103,19 @@ class PigeonHunterViewModel : ViewModel() {
     }
 
     /**
-     * Public API: fetch current location and convert to city string.
-     * This is called when user takes a photo AND when user taps "Share Location".
-     * 
-     * Steps:
-     * 1. Get current location via FusedLocationProviderClient (lastLocation -> currentLocation)
-     * 2. Reverse-geocode lat/lon to city name using Geocoder
-     * 3. Update UI state with city string
+     * Public API: shareLocation - uses applicationContext internally,
+     * no Activity context needed from caller.
      */
-    @SuppressLint("MissingPermission") // Permission is checked in Activity before calling
-    fun shareLocation(context: Context) {
-        if (isLocationPermissionGranted) {
-            fetchCurrentLocation(context)
-        }
+    fun shareLocation() {
+        fetchCurrentLocation()
     }
 
-
     /**
-     * Alias for shareLocation - more descriptive for auto-fetch on photo capture
+     * Fetch current location and convert to city string using applicationContext.
+     * No Context param needed - uses appContext from AndroidViewModel.
      */
     @SuppressLint("MissingPermission")
-    fun fetchCurrentLocation(context: Context) {
-        // Prevent duplicate fetches
+    fun fetchCurrentLocation() {
         if (_uiState.value.isFetchingLocation) {
             Log.d("PigeonHunterVM", "Already fetching location, skipping")
             return
@@ -159,8 +128,7 @@ class PigeonHunterViewModel : ViewModel() {
             )
 
             try {
-                val appContext = context.applicationContext
-                val city = getCityFromCurrentLocation(appContext)
+                val city = getCityFromCurrentLocation()
 
                 if (city != null) {
                     Log.d("PigeonHunterVM", "Location resolved to city: $city")
@@ -191,18 +159,13 @@ class PigeonHunterViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Core logic: Get current lat/lon and reverse-geocode to city name
-     */
     @SuppressLint("MissingPermission")
-    private suspend fun getCityFromCurrentLocation(context: Context): String? {
-        val fusedClient = LocationServices.getFusedLocationProviderClient(context)
+    private suspend fun getCityFromCurrentLocation(): String? {
+        val fusedClient = LocationServices.getFusedLocationProviderClient(appContext)
 
-        // Step 1: Try last known location first (fast, no extra battery)
         var location = awaitLastLocation(fusedClient)
         Log.d("PigeonHunterVM", "Last location: $location")
 
-        // Step 2: If last location is null, request fresh high-accuracy location
         if (location == null) {
             Log.d("PigeonHunterVM", "Last location null, requesting current location...")
             location = awaitCurrentLocation(fusedClient)
@@ -214,8 +177,7 @@ class PigeonHunterViewModel : ViewModel() {
             return null
         }
 
-        // Step 3: Convert lat/lon to city string via Geocoder
-        return reverseGeocodeToCity(context, location.latitude, location.longitude)
+        return reverseGeocodeToCity(location.latitude, location.longitude)
     }
 
     @SuppressLint("MissingPermission")
@@ -241,21 +203,15 @@ class PigeonHunterViewModel : ViewModel() {
             .addOnCanceledListener { cont.cancel() }
     }
 
-    /**
-     * Reverse geocode lat/lon to city name
-     * Handles both pre-Tiramisu (sync) and Tiramisu+ (async callback) APIs
-     */
-    private suspend fun reverseGeocodeToCity(context: Context, latitude: Double, longitude: Double): String? =
+    private suspend fun reverseGeocodeToCity(latitude: Double, longitude: Double): String? =
         withContext(Dispatchers.IO) {
             try {
-                val geocoder = Geocoder(context, Locale.getDefault())
+                val geocoder = Geocoder(appContext, Locale.getDefault())
 
                 val city = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    // API 33+ uses async callback
                     suspendCancellableCoroutine { cont ->
                         geocoder.getFromLocation(latitude, longitude, 1) { addresses ->
                             val result = addresses.firstOrNull()?.let { addr ->
-                                // Prefer locality (city), fall back to sub-admin, admin, country
                                 addr.locality
                                     ?: addr.subAdminArea
                                     ?: addr.adminArea
@@ -285,9 +241,6 @@ class PigeonHunterViewModel : ViewModel() {
             }
         }
     
-    /**
-     * Clear error message
-     */
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
