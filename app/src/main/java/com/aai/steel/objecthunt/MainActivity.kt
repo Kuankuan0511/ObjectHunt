@@ -62,14 +62,13 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            // Use applicationContext inside ViewModel - no need to pass Activity
-            viewModel.fetchCurrentLocation()
+            viewModel.fetchCurrentLocation(this)
         } else {
             Toast.makeText(this, "Location permission denied. Can't get city.", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // Combined launcher for initial app launch - requests both at once
+    // Combined launcher for initial app launch - requests both at once (at launch, not during analyzing)
     private val requestMultiplePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
@@ -80,8 +79,6 @@ class MainActivity : ComponentActivity() {
         if (!cameraGranted) {
             Toast.makeText(this, "Camera permission denied", Toast.LENGTH_SHORT).show()
         }
-        // Location granted at launch - optionally pre-fetch city using applicationContext
-        // No Activity context needed anymore
     }
     
     private val takePictureLauncher = registerForActivityResult(
@@ -89,7 +86,7 @@ class MainActivity : ComponentActivity() {
     ) { bitmap ->
         bitmap?.let {
             viewModel.onPhotoCaptured(it)
-            // Silent fetch using applicationContext inside ViewModel
+            // Silent fetch - permission already requested at launch, no prompt during analyzing
             fetchCityIfPermittedSilent()
         }
     }
@@ -111,11 +108,11 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Silent version - only fetches if permission already granted.
-     * Uses applicationContext inside ViewModel, no Activity context passed.
+     * No dialog during analyzing; uses context internally converted to applicationContext.
      */
     private fun fetchCityIfPermittedSilent() {
         if (hasLocationPermission()) {
-            viewModel.fetchCurrentLocation() // no context arg - uses applicationContext internally
+            viewModel.fetchCurrentLocation(this)
         }
     }
 

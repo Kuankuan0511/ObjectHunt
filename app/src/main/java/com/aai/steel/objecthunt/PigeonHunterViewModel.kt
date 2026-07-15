@@ -1,12 +1,12 @@
 package com.aai.steel.objecthunt
 
 import android.annotation.SuppressLint
-import android.app.Application
+import android.content.Context
 import android.location.Geocoder
 import android.os.Build
 import android.graphics.Bitmap
 import android.util.Log
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -34,14 +34,15 @@ data class PigeonHunterUiState(
 )
 
 /**
- * ViewModel using ApplicationContext instead of Activity Context.
- * Extends AndroidViewModel so we can get applicationContext via getApplication().
- * This avoids memory leaks from holding an Activity reference.
+ * ViewModel using init block instead of a Factory in Activity.
+ * Repository is created in init, Activity can just do: by viewModels()
+ * 
+ * Uses Activity Context passed from caller (converted to applicationContext internally
+ * for FusedLocationProviderClient to avoid leaks).
  */
-class PigeonHunterViewModel(application: Application) : AndroidViewModel(application) {
+class PigeonHunterViewModel : ViewModel() {
 
     private val repository: PigeonRepository
-    private val appContext = getApplication<Application>().applicationContext
 
     init {
         val apiService = PigeonRepository.createApiService()
@@ -50,7 +51,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             apiKey = BuildConfig.MUSE_API_KEY,
             model = BuildConfig.MUSE_API_MODEL
         )
-        Log.d("PigeonHunterVM", "ViewModel init with applicationContext - model ${BuildConfig.MUSE_API_MODEL}")
+        Log.d("PigeonHunterVM", "ViewModel init - repo created with model ${BuildConfig.MUSE_API_MODEL}")
     }
     
     private val _uiState = MutableStateFlow(PigeonHunterUiState())
@@ -103,19 +104,15 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * Public API: shareLocation - uses applicationContext internally,
-     * no Activity context needed from caller.
+     * Fetch current location -> city string.
+     * Takes Context from Activity but uses applicationContext internally to avoid leaks.
      */
-    fun shareLocation() {
-        fetchCurrentLocation()
+    fun shareLocation(context: Context) {
+        fetchCurrentLocation(context)
     }
 
-    /**
-     * Fetch current location and convert to city string using applicationContext.
-     * No Context param needed - uses appContext from AndroidViewModel.
-     */
     @SuppressLint("MissingPermission")
-    fun fetchCurrentLocation() {
+    fun fetchCurrentLocation(context: Context) {
         if (_uiState.value.isFetchingLocation) {
             Log.d("PigeonHunterVM", "Already fetching location, skipping")
             return
@@ -128,7 +125,8 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             )
 
             try {
-                val city = getCityFromCurrentLocation()
+                val appContext = context.applicationContext
+                val city = getCityFromCurrentLocation(appContext)
 
                 if (city != null) {
                     Log.d("PigeonHunterVM", "Location resolved to city: $city")
@@ -160,8 +158,8 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun getCityFromCurrentLocation(): String? {
-        val fusedClient = LocationServices.getFusedLocationProviderClient(appContext)
+    private suspend fun getCityFromCurrentLocation(context: Context): String? {
+        val fusedClient = LocationServices.getFusedLocationProviderClient(context)
 
         var location = awaitLastLocation(fusedClient)
         Log.d("PigeonHunterVM", "Last location: $location")
@@ -177,7 +175,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             return null
         }
 
-        return reverseGeocodeToCity(location.latitude, location.longitude)
+        return reverseGeocodeToCity(context, location.latitude, location.longitude)
     }
 
     @SuppressLint("MissingPermission")
@@ -203,10 +201,10 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             .addOnCanceledListener { cont.cancel() }
     }
 
-    private suspend fun reverseGeocodeToCity(latitude: Double, longitude: Double): String? =
+    private suspend fun reverseGeocodeToCity(context: Context, latitude: Double, longitude: Double): String? =
         withContext(Dispatchers.IO) {
             try {
-                val geocoder = Geocoder(appContext, Locale.getDefault())
+                val geocoder = Geocoder(context, Locale.getDefault())
 
                 val city = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     suspendCancellableCoroutine { cont ->
