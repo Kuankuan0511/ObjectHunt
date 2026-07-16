@@ -1,10 +1,9 @@
 package com.aai.steel.objecthunt
 
-import android.util.Log
-
 /**
  * Dedicated parser for Muse API pigeon responses.
- * Pure Kotlin, no Android network dependencies -> easy to unit test.
+ * Pure Kotlin, no Android dependencies -> easy to unit test.
+ * (Removed android.util.Log to avoid crashing JVM unit tests)
  *
  * Responsibilities:
  * - Extract raw text from MuseApiResponse output
@@ -84,8 +83,6 @@ object PigeonResponseParser {
             "low" -> 0.5f
             else -> if (hasPigeon) 0.8f else 0.1f
         }
-
-        Log.d("PigeonResponseParser", "Parsed - hasPigeon=$hasPigeon, type=$pigeonType, conf=$confidence")
 
         return PigeonDetectionResult(
             hasPigeon = hasPigeon,
