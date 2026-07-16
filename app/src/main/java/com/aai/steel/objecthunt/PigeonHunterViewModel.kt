@@ -32,7 +32,10 @@ data class PigeonHunterUiState(
     val errorMessage: String? = null,
     /** City name where the photo was taken (e.g., "San Francisco") */
     val location: String? = null,
-    val isFetchingLocation: Boolean = false
+    val isFetchingLocation: Boolean = false,
+    val isSaving: Boolean = false,
+    val saveMessage: String? = null,
+    val savedCount: Int = 0
 )
 
 /**
@@ -45,6 +48,7 @@ data class PigeonHunterUiState(
 class PigeonHunterViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: PigeonRepository
+    private val savedRepository: com.aai.steel.objecthunt.data.SavedPigeonRepository
 
     init {
         val apiService = PigeonRepository.createApiService()
@@ -53,11 +57,25 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             apiKey = BuildConfig.MUSE_API_KEY,
             model = BuildConfig.MUSE_API_MODEL
         )
+        savedRepository = com.aai.steel.objecthunt.data.SavedPigeonRepository.fromContext(getApplication())
         Log.d("PigeonHunterVM", "ViewModel init - repo created with model ${BuildConfig.MUSE_API_MODEL}")
+
+        // Load saved count initially
+        viewModelScope.launch {
+            try {
+                val count = savedRepository.getCount()
+                _uiState.value = _uiState.value.copy(savedCount = count)
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Failed to load saved count", e)
+            }
+        }
     }
     
     private val _uiState = MutableStateFlow(PigeonHunterUiState())
     val uiState: StateFlow<PigeonHunterUiState> = _uiState.asStateFlow()
+
+    // Expose saved pigeons flow for history screen
+    val savedPigeonsFlow = savedRepository.getSavedPigeonsFlow()
     
     fun onPhotoCaptured(bitmap: Bitmap) {
         Log.d("PigeonHunterVM", "Photo captured, starting analysis")
@@ -237,7 +255,61 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             }
         }
     
+    /**
+     * Save current hunt to local DB (max 20, oldest deleted)
+     * Repository handles limit enforcement
+     */
+    fun onSaveCurrent() {
+        val bitmap = _uiState.value.capturedBitmap
+        val result = _uiState.value.pigeonResult
+        val city = _uiState.value.location
+
+        if (bitmap == null) {
+            _uiState.value = _uiState.value.copy(saveMessage = "No photo to save")
+            return
+        }
+
+        if (_uiState.value.isSaving) return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSaving = true, saveMessage = null, errorMessage = null)
+            try {
+                val id = savedRepository.savePigeon(bitmap, result, city)
+                val newCount = savedRepository.getCount()
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    savedCount = newCount,
+                    saveMessage = if (newCount >= 20) "Saved! Oldest deleted (max 20)" else "Saved! ($newCount/20)"
+                )
+                Log.d("PigeonHunterVM", "Saved pigeon id=$id, count=$newCount")
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Failed to save pigeon", e)
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    errorMessage = "Failed to save: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun clearSaveMessage() {
+        _uiState.value = _uiState.value.copy(saveMessage = null)
+    }
+    
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
+    }
+
+    // For history screen - delete
+    fun deleteSaved(id: Long) {
+        viewModelScope.launch {
+            try {
+                savedRepository.deleteById(id)
+                val count = savedRepository.getCount()
+                _uiState.value = _uiState.value.copy(savedCount = count, saveMessage = "Deleted")
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Failed to delete $id", e)
+            }
+        }
     }
 }

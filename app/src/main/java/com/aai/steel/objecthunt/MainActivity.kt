@@ -163,6 +163,12 @@ class MainActivity : ComponentActivity() {
                         },
                         onRetakePhoto = {
                             viewModel.onRetakePhoto()
+                        },
+                        onSave = {
+                            viewModel.onSaveCurrent()
+                        },
+                        onClearSaveMessage = {
+                            viewModel.clearSaveMessage()
                         }
                     )
                 }
@@ -177,6 +183,8 @@ fun ObjectHuntScreen(
     uiState: PigeonHunterUiState,
     onTakePhoto: () -> Unit,
     onRetakePhoto: () -> Unit,
+    onSave: () -> Unit,
+    onClearSaveMessage: () -> Unit
 ) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -194,7 +202,7 @@ fun ObjectHuntScreen(
         )
 
         if (uiState.capturedBitmap == null) {
-            // PORTRAIT and LANDSCAPE initial screen - unchanged
+            // Initial screen - unchanged, plus saved count
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -226,11 +234,16 @@ fun ObjectHuntScreen(
                         modifier = Modifier.padding(top = 16.dp)
                     )
 
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Saved: ${uiState.savedCount}/20",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         } else {
             if (isLandscape) {
-                // LANDSCAPE ONLY: Row with image on left, results scrollable on right
+                // LANDSCAPE: Row with image left, results right
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -337,6 +350,21 @@ fun ObjectHuntScreen(
                             }
                         }
 
+                        uiState.saveMessage?.let { msg ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                                )
+                            ) {
+                                Text(
+                                    text = msg,
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+
                         uiState.errorMessage?.let { error ->
                             Text(
                                 text = error,
@@ -345,17 +373,36 @@ fun ObjectHuntScreen(
                             )
                         }
 
-                        Button(
-                            onClick = onRetakePhoto,
-                            enabled = !uiState.isAnalyzing,
-                            modifier = Modifier.fillMaxWidth()
+                        // Save + Retake buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Take Another Photo")
+                            Button(
+                                onClick = onSave,
+                                enabled = !uiState.isAnalyzing && !uiState.isSaving && uiState.capturedBitmap != null,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                if (uiState.isSaving) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Saving...")
+                                } else {
+                                    Text("💾 Save (${uiState.savedCount}/20)")
+                                }
+                            }
+                            Button(
+                                onClick = onRetakePhoto,
+                                enabled = !uiState.isAnalyzing && !uiState.isSaving,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Retake")
+                            }
                         }
                     }
                 }
             } else {
-                // PORTRAIT: exact original layout - untouched
+                // PORTRAIT: exact original layout + Save button
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -439,6 +486,22 @@ fun ObjectHuntScreen(
                             }
                         }
 
+                        uiState.saveMessage?.let { msg ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                                )
+                            ) {
+                                Text(
+                                    text = msg,
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+
                         uiState.errorMessage?.let { error ->
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
@@ -454,13 +517,27 @@ fun ObjectHuntScreen(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = onRetakePhoto,
-                        enabled = !uiState.isAnalyzing
+                        onClick = onSave,
+                        enabled = !uiState.isAnalyzing && !uiState.isSaving,
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text("Take Another Photo")
+                        if (uiState.isSaving) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Saving...")
+                        } else {
+                            Text("💾 Save (${uiState.savedCount}/20)")
+                        }
+                    }
+                    Button(
+                        onClick = onRetakePhoto,
+                        enabled = !uiState.isAnalyzing && !uiState.isSaving,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Retake")
                     }
                 }
             }
