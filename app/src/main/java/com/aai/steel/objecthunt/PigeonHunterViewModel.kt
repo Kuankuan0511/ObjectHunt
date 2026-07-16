@@ -60,13 +60,24 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
         savedRepository = com.aai.steel.objecthunt.data.SavedPigeonRepository.fromContext(getApplication())
         Log.d("PigeonHunterVM", "ViewModel init - repo created with model ${BuildConfig.MUSE_API_MODEL}")
 
-        // Load saved count initially
+        // Load saved count initially and keep it in sync via Flow
         viewModelScope.launch {
             try {
                 val count = savedRepository.getCount()
                 _uiState.value = _uiState.value.copy(savedCount = count)
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Failed to load saved count", e)
+            }
+        }
+
+        // Keep savedCount always in sync with DB (fixes UI bug where count resets to 0)
+        viewModelScope.launch {
+            try {
+                savedRepository.getSavedPigeonsFlow().collect { list ->
+                    _uiState.value = _uiState.value.copy(savedCount = list.size)
+                }
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Failed to collect saved flow", e)
             }
         }
     }
@@ -83,16 +94,19 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             capturedBitmap = bitmap,
             isAnalyzing = true,
             pigeonResult = null,
-            errorMessage = null
+            errorMessage = null,
+            saveMessage = null // clear previous save message on new photo
         )
         analyzePhoto(bitmap)
-        fetchCurrentLocation()
-
+        // Don't call fetchCurrentLocation() here - Activity handles it via fetchCityIfPermittedSilent()
+        // with permission check at launch, avoiding double fetch and SecurityException
     }
 
     fun onRetakePhoto() {
-        Log.d("PigeonHunterVM", "Resetting for new photo")
-        _uiState.value = PigeonHunterUiState()
+        Log.d("PigeonHunterVM", "Resetting for new photo, preserving savedCount=${_uiState.value.savedCount}")
+        // Preserve savedCount - was bug: PigeonHunterUiState() reset it to 0
+        val currentSavedCount = _uiState.value.savedCount
+        _uiState.value = PigeonHunterUiState(savedCount = currentSavedCount)
     }
     
     private fun analyzePhoto(bitmap: Bitmap) {
