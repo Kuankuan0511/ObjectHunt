@@ -136,8 +136,8 @@ class PigeonRepository(
             }
         }
         
-        // All retries exhausted, return error result
-        return createErrorResult(lastException)
+        // All retries exhausted, delegate to dedicated parser for user-friendly error
+        return PigeonResponseParser.createErrorResultFromException(lastException)
     }
     
     /**
@@ -182,8 +182,8 @@ class PigeonRepository(
             request = request
         )
         
-        // Parse response
-        return parseResponse(response)
+        // Delegate parsing to dedicated parser model
+        return PigeonResponseParser.parseApiResponse(response)
     }
     
     /**
@@ -199,115 +199,6 @@ class PigeonRepository(
             message.contains("504") -> true // Gateway Timeout
             else -> false // Don't retry for 4xx errors (client errors)
         }
-    }
-    
-    /**
-     * Create error result from exception
-     */
-    private fun createErrorResult(e: Exception?): PigeonDetectionResult {
-        val userFriendlyMessage = when {
-            e?.message?.contains("Unable to resolve host", ignoreCase = true) == true ->
-                "No internet connection. Please check your network and try again."
-            e?.message?.contains("timeout", ignoreCase = true) == true ->
-                "Request timed out after multiple attempts. The AI service may be busy. Please try again later."
-            e?.message?.contains("401", ignoreCase = true) == true ->
-                "Invalid API key. Please check your API key in local.properties."
-            e?.message?.contains("403", ignoreCase = true) == true ->
-                "Access denied. Your API key doesn't have permission to use this model."
-            e?.message?.contains("429", ignoreCase = true) == true ->
-                "Too many requests. Please wait a moment and try again."
-            e?.message?.contains("500", ignoreCase = true) == true ||
-            e?.message?.contains("502", ignoreCase = true) == true ||
-            e?.message?.contains("503", ignoreCase = true) == true ->
-                "Server error. The AI service is temporarily unavailable after multiple attempts. Please try again later."
-            else ->
-                "Failed to analyze image after multiple attempts: ${e?.message ?: "Unknown error"}"
-        }
-        
-        return PigeonDetectionResult(
-            hasPigeon = false,
-            pigeonType = null,
-            confidence = 0f,
-            features = null,
-            location = null,
-            description = userFriendlyMessage,
-            rawResponse = ""
-        )
-    }
-    
-    private fun parseResponse(response: MuseApiResponse): PigeonDetectionResult {
-        // Check for API error
-        response.error?.let { error ->
-            val errorCode = error.code ?: "unknown"
-            val userFriendlyMessage = when (errorCode) {
-                "model_not_found" -> "The AI model is not available. Please check the model name in your configuration."
-                "invalid_api_key" -> "Invalid API key. Please check your API key in local.properties."
-                "model_not_accessible" -> "Your API key doesn't have access to this model. Please check your permissions."
-                "rate_limit_exceeded" -> "Too many requests. Please wait a moment and try again."
-                else -> "API Error: ${error.message ?: "Unknown error"}"
-            }
-            return PigeonDetectionResult(
-                hasPigeon = false,
-                pigeonType = null,
-                confidence = 0f,
-                features = null,
-                location = null,
-                description = userFriendlyMessage,
-                rawResponse = ""
-            )
-        }
-        
-        // Extract text from output
-        val description = response.output
-            ?.filter { it.type == "message" }
-            ?.flatMap { it.content ?: emptyList() }
-            ?.filter { it.type == "output_text" }
-            ?.mapNotNull { it.text }
-            ?.joinToString("") ?: ""
-        
-        if (description.isEmpty()) {
-            return PigeonDetectionResult(
-                hasPigeon = false,
-                pigeonType = null,
-                confidence = 0f,
-                features = null,
-                location = null,
-                description = "The AI model did not return any analysis. Please try again with a clearer photo.",
-                rawResponse = ""
-            )
-        }
-        
-        // Parse structured response
-        val hasPigeon = description.contains("HAS_PIGEON:\\s*YES".toRegex(RegexOption.IGNORE_CASE))
-        
-        val typeMatch = "TYPE:\\s*(.+)".toRegex(RegexOption.IGNORE_CASE).find(description)
-        val pigeonType = typeMatch?.groupValues?.get(1)?.trim()
-            ?.takeIf { it.isNotEmpty() && !it.equals("N/A", ignoreCase = true) }
-        Log.d("ASDASD",pigeonType.toString())
-        
-        val featuresMatch = "FEATURES:\\s*(.+)".toRegex(RegexOption.IGNORE_CASE).find(description)
-        val features = featuresMatch?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
-        
-        val locationMatch = "LOCATION:\\s*(.+)".toRegex(RegexOption.IGNORE_CASE).find(description)
-        val location = locationMatch?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
-        
-        val confidenceMatch = "CONFIDENCE:\\s*(High|Medium|Low)".toRegex(RegexOption.IGNORE_CASE).find(description)
-        val confidence = when (confidenceMatch?.groupValues?.get(1)?.lowercase()) {
-            "high" -> 0.9f
-            "medium" -> 0.7f
-            "low" -> 0.5f
-            else -> if (hasPigeon) 0.8f else 0.1f
-        }
-        
-        return PigeonDetectionResult(
-            hasPigeon = hasPigeon,
-            pigeonType = pigeonType,
-            confidence = confidence,
-            features = features,
-            location = location,
-            description = description,
-            rawResponse = ""
-        )
     }
     
     private fun bitmapToBase64(bitmap: Bitmap): String {

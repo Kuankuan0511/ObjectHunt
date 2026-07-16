@@ -1,11 +1,13 @@
 package com.aai.steel.objecthunt
 
 import android.annotation.SuppressLint
+import android.app.Application
 import android.content.Context
 import android.location.Geocoder
 import android.os.Build
 import android.graphics.Bitmap
 import android.util.Log
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.location.LocationServices
@@ -40,7 +42,7 @@ data class PigeonHunterUiState(
  * Uses Activity Context passed from caller (converted to applicationContext internally
  * for FusedLocationProviderClient to avoid leaks).
  */
-class PigeonHunterViewModel : ViewModel() {
+class PigeonHunterViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: PigeonRepository
 
@@ -66,6 +68,8 @@ class PigeonHunterViewModel : ViewModel() {
             errorMessage = null
         )
         analyzePhoto(bitmap)
+        fetchCurrentLocation()
+
     }
 
     fun onRetakePhoto() {
@@ -78,12 +82,14 @@ class PigeonHunterViewModel : ViewModel() {
             try {
                 Log.d("PigeonHunterVM", "Starting analysis via Repository...")
                 val result = repository.detectPigeon(bitmap)
-                
                 _uiState.value = _uiState.value.copy(
                     pigeonResult = result,
                     isAnalyzing = false
                 )
                 Log.d("PigeonHunterVM", "Analysis complete. Has pigeon: ${result.hasPigeon}")
+            } catch (e: SecurityException) {
+                Log.e("PigeonHunterVM", "Location permission is not granted", e)
+
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Error analyzing image", e)
                 _uiState.value = _uiState.value.copy(
@@ -103,16 +109,9 @@ class PigeonHunterViewModel : ViewModel() {
         }
     }
 
-    /**
-     * Fetch current location -> city string.
-     * Takes Context from Activity but uses applicationContext internally to avoid leaks.
-     */
-    fun shareLocation(context: Context) {
-        fetchCurrentLocation(context)
-    }
 
     @SuppressLint("MissingPermission")
-    fun fetchCurrentLocation(context: Context) {
+    fun fetchCurrentLocation() {
         if (_uiState.value.isFetchingLocation) {
             Log.d("PigeonHunterVM", "Already fetching location, skipping")
             return
@@ -125,8 +124,7 @@ class PigeonHunterViewModel : ViewModel() {
             )
 
             try {
-                val appContext = context.applicationContext
-                val city = getCityFromCurrentLocation(appContext)
+                val city = getCityFromCurrentLocation(getApplication())
 
                 if (city != null) {
                     Log.d("PigeonHunterVM", "Location resolved to city: $city")
