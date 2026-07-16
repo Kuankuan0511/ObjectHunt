@@ -188,4 +188,195 @@ class PigeonResponseParserTest {
         val result = PigeonResponseParser.createErrorResultFromException(e)
         assertTrue(result.description.contains("Server error"))
     }
+
+    // ---------- Additional coverage: FEATURES, LOCATION, whitespace, greedy, errors ----------
+
+    @Test
+    fun parseRawDescription_featuresExtraction() {
+        val raw = """
+            HAS_PIGEON: YES
+            FEATURES: brown wings, black tail
+            CONFIDENCE: High
+        """.trimIndent()
+        val result = PigeonResponseParser.parseRawDescription(raw)
+        assertEquals("brown wings, black tail", result.features)
+        assertTrue(result.hasPigeon)
+    }
+
+    @Test
+    fun parseRawDescription_locationExtraction() {
+        val raw = """
+            HAS_PIGEON: YES
+            LOCATION: top-left corner
+            CONFIDENCE: Medium
+        """.trimIndent()
+        val result = PigeonResponseParser.parseRawDescription(raw)
+        assertEquals("top-left corner", result.location)
+        assertEquals(0.7f, result.confidence, 0.01f)
+    }
+
+    @Test
+    fun parseRawDescription_whitespaceTrimming() {
+        val raw = """
+            HAS_PIGEON:   YES  
+            TYPE:   Rock Pigeon   
+            FEATURES:   grey feathers   
+            LOCATION:   center   
+            CONFIDENCE:   High   
+        """.trimIndent()
+        val result = PigeonResponseParser.parseRawDescription(raw)
+        assertTrue(result.hasPigeon)
+        assertEquals("Rock Pigeon", result.pigeonType)
+        assertEquals("grey feathers", result.features)
+        assertEquals("center", result.location)
+        assertEquals(0.9f, result.confidence, 0.01f)
+    }
+
+    @Test
+    fun parseRawDescription_greedyCheck_typeDoesNotCaptureNextLine() {
+        // TYPE regex uses (.+) which should stop at newline (dot doesn't match newline by default)
+        val raw = """
+            HAS_PIGEON: YES
+            TYPE: Rock Pigeon
+            FEATURES: grey
+            LOCATION: center
+            CONFIDENCE: High
+        """.trimIndent()
+        val result = PigeonResponseParser.parseRawDescription(raw)
+        assertEquals("Rock Pigeon", result.pigeonType)
+        assertEquals("grey", result.features)
+        assertEquals("center", result.location)
+    }
+
+    @Test
+    fun parseRawDescription_junkTextBefore() {
+        val raw = """
+            This is an AI analysis of the image.
+            I can see a bird.
+            HAS_PIGEON: YES
+            TYPE: Feral Pigeon
+            CONFIDENCE: Medium
+        """.trimIndent()
+        val result = PigeonResponseParser.parseRawDescription(raw)
+        assertTrue(result.hasPigeon)
+        assertEquals("Feral Pigeon", result.pigeonType)
+    }
+
+    @Test
+    fun parseRawDescription_emptyFeaturesAndLocation() {
+        val raw = """
+            HAS_PIGEON: YES
+            TYPE: Wood Pigeon
+            FEATURES: 
+            LOCATION: 
+            CONFIDENCE: High
+        """.trimIndent()
+        val result = PigeonResponseParser.parseRawDescription(raw)
+        // empty after trim should become null
+        assertNull(result.features)
+        assertNull(result.location)
+    }
+
+    @Test
+    fun parseRawDescription_confidenceVariations() {
+        val high = PigeonResponseParser.parseRawDescription("HAS_PIGEON: YES\nCONFIDENCE: HIGH")
+        val medium = PigeonResponseParser.parseRawDescription("HAS_PIGEON: YES\nCONFIDENCE: medium")
+        val low = PigeonResponseParser.parseRawDescription("HAS_PIGEON: YES\nCONFIDENCE: LoW")
+        assertEquals(0.9f, high.confidence, 0.01f)
+        assertEquals(0.7f, medium.confidence, 0.01f)
+        assertEquals(0.5f, low.confidence, 0.01f)
+    }
+
+    @Test
+    fun parseApiResponse_modelNotFound() {
+        val response = MuseApiResponse(
+            id = "test", output = null,
+            error = ApiError(code = "model_not_found", message = "not found"),
+            usage = null
+        )
+        val result = PigeonResponseParser.parseApiResponse(response)
+        assertFalse(result.hasPigeon)
+        assertTrue(result.description.contains("not available", ignoreCase = true))
+    }
+
+    @Test
+    fun parseApiResponse_modelNotAccessible() {
+        val response = MuseApiResponse(
+            id = "test", output = null,
+            error = ApiError(code = "model_not_accessible", message = "no access"),
+            usage = null
+        )
+        val result = PigeonResponseParser.parseApiResponse(response)
+        assertTrue(result.description.contains("doesn't have access", ignoreCase = true))
+    }
+
+    @Test
+    fun parseApiResponse_rateLimit() {
+        val response = MuseApiResponse(
+            id = "test", output = null,
+            error = ApiError(code = "rate_limit_exceeded", message = "too many"),
+            usage = null
+        )
+        val result = PigeonResponseParser.parseApiResponse(response)
+        assertTrue(result.description.contains("Too many requests"))
+    }
+
+    @Test
+    fun parseApiResponse_unknownErrorCode() {
+        val response = MuseApiResponse(
+            id = "test", output = null,
+            error = ApiError(code = "some_unknown", message = "weird error"),
+            usage = null
+        )
+        val result = PigeonResponseParser.parseApiResponse(response)
+        assertTrue(result.description.contains("API Error"))
+    }
+
+    @Test
+    fun parseApiResponse_multipleContentPiecesConcatenated() {
+        // Muse can return multiple output_text chunks
+        val response = MuseApiResponse(
+            id = "test",
+            output = listOf(
+                OutputItem(
+                    type = "message",
+                    content = listOf(
+                        OutputContent(type = "output_text", text = "HAS_PIGEON: YES\n"),
+                        OutputContent(type = "output_text", text = "TYPE: Fantail Pigeon\n"),
+                        OutputContent(type = "output_text", text = "CONFIDENCE: High")
+                    )
+                )
+            ),
+            error = null,
+            usage = null
+        )
+        val result = PigeonResponseParser.parseApiResponse(response)
+        assertTrue(result.hasPigeon)
+        assertEquals("Fantail Pigeon", result.pigeonType)
+    }
+
+    @Test
+    fun createErrorResult_nullException() {
+        val result = PigeonResponseParser.createErrorResultFromException(null)
+        assertFalse(result.hasPigeon)
+        assertTrue(result.description.contains("Unknown error", ignoreCase = true) || result.description.contains("Failed to analyze"))
+    }
+
+    @Test
+    fun createErrorResult_403_and_429() {
+        val e403 = Exception("HTTP 403 Forbidden")
+        val e429 = Exception("HTTP 429 Too Many Requests")
+        val r403 = PigeonResponseParser.createErrorResultFromException(e403)
+        val r429 = PigeonResponseParser.createErrorResultFromException(e429)
+        assertTrue(r403.description.contains("Access denied"))
+        assertTrue(r429.description.contains("Too many requests"))
+    }
+
+    @Test
+    fun createErrorResult_500_and_502() {
+        val e500 = Exception("HTTP 500 Internal Server Error")
+        val e502 = Exception("HTTP 502 Bad Gateway")
+        assertTrue(PigeonResponseParser.createErrorResultFromException(e500).description.contains("Server error"))
+        assertTrue(PigeonResponseParser.createErrorResultFromException(e502).description.contains("Server error"))
+    }
 }
