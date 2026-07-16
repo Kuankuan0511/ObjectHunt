@@ -12,12 +12,13 @@ package com.aai.steel.objecthunt
  */
 object PigeonResponseParser {
 
-    // Precompiled regexes - case-insensitive
-    private val hasPigeonRegex = Regex("HAS_PIGEON:\\s*(YES|NO)", RegexOption.IGNORE_CASE)
-    private val typeRegex = Regex("TYPE:\\s*(.+)", RegexOption.IGNORE_CASE)
-    private val featuresRegex = Regex("FEATURES:\\s*(.+)", RegexOption.IGNORE_CASE)
-    private val locationRegex = Regex("LOCATION:\\s*(.+)", RegexOption.IGNORE_CASE)
-    private val confidenceRegex = Regex("CONFIDENCE:\\s*(High|Medium|Low)", RegexOption.IGNORE_CASE)
+    // Precompiled regexes - case-insensitive, NOT crossing newlines
+    // Use [ \t]* instead of \s* to avoid consuming \n and capturing next field (bug: FEATURES: \nLOCATION: -> FEATURES would capture LOCATION:)
+    private val hasPigeonRegex = Regex("HAS_PIGEON:[ \\t]*(YES|NO)", RegexOption.IGNORE_CASE)
+    private val typeRegex = Regex("TYPE:[ \\t]*([^\\r\\n]+)", RegexOption.IGNORE_CASE)
+    private val featuresRegex = Regex("FEATURES:[ \\t]*([^\\r\\n]+)", RegexOption.IGNORE_CASE)
+    private val locationRegex = Regex("LOCATION:[ \\t]*([^\\r\\n]+)", RegexOption.IGNORE_CASE)
+    private val confidenceRegex = Regex("CONFIDENCE:[ \\t]*(High|Medium|Low)", RegexOption.IGNORE_CASE)
 
     /**
      * Parse full API response (including error handling) into domain model.
