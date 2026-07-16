@@ -31,6 +31,9 @@ interface PigeonDao {
     @Query("DELETE FROM saved_pigeons")
     suspend fun deleteAll()
 
+    @Query("SELECT * FROM saved_pigeons WHERE imageHash = :hash LIMIT 1")
+    suspend fun getByHash(hash: String): PigeonEntity?
+
     /**
      * Delete N oldest entries based on timestamp ASC
      */

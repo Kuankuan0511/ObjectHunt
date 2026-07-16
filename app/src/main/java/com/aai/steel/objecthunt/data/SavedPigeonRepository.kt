@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 
 /**
  * Repository for saved pigeon hunts - handles conversion from UI state to Entity
@@ -27,16 +28,30 @@ class SavedPigeonRepository(
 
     suspend fun deleteAll() = dao.deleteAll()
 
+    sealed class SaveResult {
+        data class Saved(val id: Long) : SaveResult()
+        data class AlreadyExists(val existingId: Long) : SaveResult()
+    }
+
     /**
      * Save current hunt: bitmap + detection result + city
-     * Returns id of inserted row
+     * Returns Saved with new id, or AlreadyExists if same image already saved
+     * Duplicate detection via SHA-256 hash of imageBytes
      */
     suspend fun savePigeon(
         bitmap: Bitmap,
         result: PigeonDetectionResult?,
         city: String?
-    ): Long = withContext(Dispatchers.IO) {
+    ): SaveResult = withContext(Dispatchers.IO) {
         val imageBytes = bitmapToByteArray(bitmap)
+        val hash = sha256(imageBytes)
+
+        // Check duplicate
+        val existing = dao.getByHash(hash)
+        if (existing != null) {
+            Log.d("SavedPigeonRepo", "Duplicate image detected, hash=$hash, existingId=${existing.id}")
+            return@withContext SaveResult.AlreadyExists(existing.id)
+        }
 
         val entity = PigeonEntity(
             timestamp = System.currentTimeMillis(),
@@ -47,13 +62,20 @@ class SavedPigeonRepository(
             city = city,
             description = result?.description ?: "No analysis",
             rawResponse = result?.rawResponse ?: "",
-            imageBytes = imageBytes
+            imageBytes = imageBytes,
+            imageHash = hash
         )
 
         // Enforces max 20 - deletes oldest if needed
         val insertedId = dao.insertWithLimit(entity, limit = 20)
-        Log.d("SavedPigeonRepo", "Saved pigeon id=$insertedId, city=$city, type=${result?.pigeonType}, total=${dao.count()}")
-        insertedId
+        Log.d("SavedPigeonRepo", "Saved pigeon id=$insertedId, hash=$hash, city=$city, type=${result?.pigeonType}, total=${dao.count()}")
+        SaveResult.Saved(insertedId)
+    }
+
+    private fun sha256(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(bytes)
+        return hash.joinToString("") { "%02x".format(it) }
     }
 
     /**

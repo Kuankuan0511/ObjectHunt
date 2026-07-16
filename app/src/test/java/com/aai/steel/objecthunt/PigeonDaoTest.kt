@@ -45,7 +45,8 @@ class PigeonDaoTest {
     private fun createEntity(
         id: Long = 0,
         timestamp: Long = System.currentTimeMillis(),
-        type: String? = "Rock Pigeon"
+        type: String? = "Rock Pigeon",
+        imageHash: String = ""
     ): PigeonEntity {
         return PigeonEntity(
             id = id,
@@ -57,7 +58,8 @@ class PigeonDaoTest {
             city = "San Francisco",
             description = "Test pigeon",
             rawResponse = "HAS_PIGEON: YES",
-            imageBytes = fakeImage
+            imageBytes = fakeImage,
+            imageHash = imageHash
         )
     }
 
@@ -171,5 +173,41 @@ class PigeonDaoTest {
 
         dao.deleteAll()
         assertEquals(0, dao.count())
+    }
+
+    @Test
+    fun getByHash_findsExisting() = runTest {
+        val hash = "abc123hash"
+        dao.insert(createEntity(type = "WithHash", imageHash = hash))
+
+        val found = dao.getByHash(hash)
+        assertNotNull(found)
+        assertEquals("WithHash", found?.pigeonType)
+    }
+
+    @Test
+    fun getByHash_returnsNullWhenNotExists() = runTest {
+        dao.insert(createEntity(imageHash = "exists"))
+        val notFound = dao.getByHash("nonexistent")
+        assertNull(notFound)
+    }
+
+    @Test
+    fun duplicateImageHash_detection() = runTest {
+        val hash = "duplicate_hash_123"
+        dao.insert(createEntity(type = "First", imageHash = hash))
+        assertEquals(1, dao.count())
+
+        // Try to find duplicate before inserting second
+        val existing = dao.getByHash(hash)
+        assertNotNull(existing)
+        // Simulate repository logic: don't insert if exists
+        if (existing == null) {
+            dao.insert(createEntity(type = "Second", imageHash = hash))
+        }
+
+        // Count should still be 1, not 2
+        assertEquals(1, dao.count())
+        assertEquals("First", dao.getAll()[0].pigeonType)
     }
 }

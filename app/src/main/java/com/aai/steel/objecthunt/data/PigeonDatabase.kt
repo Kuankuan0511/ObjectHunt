@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [PigeonEntity::class], version = 1, exportSchema = false)
+@Database(entities = [PigeonEntity::class], version = 2, exportSchema = false)
 abstract class PigeonDatabase : RoomDatabase() {
 
     abstract fun pigeonDao(): PigeonDao

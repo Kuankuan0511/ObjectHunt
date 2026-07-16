@@ -8,6 +8,7 @@ import androidx.room.PrimaryKey
  * Room entity for saved pigeon hunts.
  * Stores all info: photo, pigeon type, confidence, features, city, etc.
  * Max 20 rows enforced by DAO insertWithLimit().
+ * imageHash used to detect duplicates.
  */
 @Entity(tableName = "saved_pigeons")
 data class PigeonEntity(
@@ -23,7 +24,9 @@ data class PigeonEntity(
     val description: String,
     val rawResponse: String,
     /** JPEG bytes, 1024px max, 80% quality (~100-300KB) */
-    @ColumnInfo(typeAffinity = ColumnInfo.BLOB) val imageBytes: ByteArray
+    @ColumnInfo(typeAffinity = ColumnInfo.BLOB) val imageBytes: ByteArray,
+    /** SHA-256 hash of imageBytes for duplicate detection */
+    val imageHash: String = ""
 ) {
     // Room needs equals/hashCode for ByteArray - data class default uses reference, so override
     override fun equals(other: Any?): Boolean {
@@ -42,6 +45,7 @@ data class PigeonEntity(
         if (description != other.description) return false
         if (rawResponse != other.rawResponse) return false
         if (!imageBytes.contentEquals(other.imageBytes)) return false
+        if (imageHash != other.imageHash) return false
 
         return true
     }
@@ -57,6 +61,7 @@ data class PigeonEntity(
         result = 31 * result + description.hashCode()
         result = 31 * result + rawResponse.hashCode()
         result = 31 * result + imageBytes.contentHashCode()
+        result = 31 * result + imageHash.hashCode()
         return result
     }
 }

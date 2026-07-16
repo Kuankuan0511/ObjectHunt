@@ -288,14 +288,26 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSaving = true, saveMessage = null, errorMessage = null)
             try {
-                val id = savedRepository.savePigeon(bitmap, result, city)
-                val newCount = savedRepository.getCount()
-                _uiState.value = _uiState.value.copy(
-                    isSaving = false,
-                    savedCount = newCount,
-                    saveMessage = if (newCount >= 20) "Saved! Oldest deleted (max 20)" else "Saved! ($newCount/20)"
-                )
-                Log.d("PigeonHunterVM", "Saved pigeon id=$id, count=$newCount")
+                when (val saveResult = savedRepository.savePigeon(bitmap, result, city)) {
+                    is com.aai.steel.objecthunt.data.SavedPigeonRepository.SaveResult.Saved -> {
+                        val newCount = savedRepository.getCount()
+                        _uiState.value = _uiState.value.copy(
+                            isSaving = false,
+                            savedCount = newCount,
+                            saveMessage = if (newCount >= 20) "Saved! Oldest deleted (max 20)" else "Saved! ($newCount/20)"
+                        )
+                        Log.d("PigeonHunterVM", "Saved pigeon id=${saveResult.id}, count=$newCount")
+                    }
+                    is com.aai.steel.objecthunt.data.SavedPigeonRepository.SaveResult.AlreadyExists -> {
+                        val count = savedRepository.getCount()
+                        _uiState.value = _uiState.value.copy(
+                            isSaving = false,
+                            savedCount = count,
+                            saveMessage = "Already saved! (id=${saveResult.existingId})"
+                        )
+                        Log.d("PigeonHunterVM", "Duplicate detected, existingId=${saveResult.existingId}")
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Failed to save pigeon", e)
                 _uiState.value = _uiState.value.copy(
