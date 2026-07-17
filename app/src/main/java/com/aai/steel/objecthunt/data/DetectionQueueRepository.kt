@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.util.Log
 import com.aai.steel.objecthunt.PigeonRepository
 import kotlinx.coroutines.Dispatchers
@@ -66,10 +67,25 @@ class DetectionQueueRepository(
         fun isNetworkAvailable(context: Context): Boolean {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
                 ?: return false
-            val network = cm.activeNetwork ?: return false
-            val caps = cm.getNetworkCapabilities(network) ?: return false
-            return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val network = cm.activeNetwork ?: return false
+                    val caps = cm.getNetworkCapabilities(network) ?: return false
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                } else {
+                    @Suppress("DEPRECATION")
+                    cm.activeNetworkInfo?.isConnected == true
+                }
+            } catch (e: Exception) {
+                // Robolectric fallback: NoSuchMethodError for getActiveNetwork() in older shadow
+                try {
+                    @Suppress("DEPRECATION")
+                    cm.activeNetworkInfo?.isConnected == true
+                } catch (e2: Exception) {
+                    false
+                }
+            }
         }
     }
 

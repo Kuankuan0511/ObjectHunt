@@ -19,10 +19,25 @@ class NetworkMonitor(private val context: Context) {
     fun isCurrentlyAvailable(): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return false
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                val network = cm.activeNetwork ?: return false
+                val caps = cm.getNetworkCapabilities(network) ?: return false
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            } else {
+                @Suppress("DEPRECATION")
+                cm.activeNetworkInfo?.isConnected == true
+            }
+        } catch (e: Exception) {
+            // Robolectric fallback
+            try {
+                @Suppress("DEPRECATION")
+                cm.activeNetworkInfo?.isConnected == true
+            } catch (e2: Exception) {
+                false
+            }
+        }
     }
 
     /**
