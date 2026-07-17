@@ -34,9 +34,32 @@ class DetectionQueueRepositoryTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = PigeonDatabase.getInMemoryInstance(context)
 
-        // Create fake API service that fails (to test queue)
-        val apiService = PigeonRepository.createApiService()
-        pigeonRepo = PigeonRepository(apiService, "fake_key", "test-model")
+        // Fake API service that returns success instantly - no network, no retry delays
+        val fakeApiService = object : MuseApiService {
+            override suspend fun createResponse(
+                authorization: String,
+                contentType: String,
+                request: MuseApiRequest
+            ): MuseApiResponse {
+                return MuseApiResponse(
+                    id = "test-id",
+                    output = listOf(
+                        OutputItem(
+                            type = "message",
+                            content = listOf(
+                                OutputContent(
+                                    type = "output_text",
+                                    text = "HAS_PIGEON: YES\nTYPE: Rock Pigeon\nCONFIDENCE: High"
+                                )
+                            )
+                        )
+                    ),
+                    error = null,
+                    usage = null
+                )
+            }
+        }
+        pigeonRepo = PigeonRepository(fakeApiService, "fake_key", "test-model")
 
         savedRepo = SavedPigeonRepository(db.pigeonDao())
         queueRepo = DetectionQueueRepository(db.queuedDetectionDao(), pigeonRepo, savedRepo)
