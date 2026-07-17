@@ -77,12 +77,12 @@ class DetectionQueueRepository(
                     @Suppress("DEPRECATION")
                     cm.activeNetworkInfo?.isConnected == true
                 }
-            } catch (e: Throwable) {
-                // Robolectric fallback: NoSuchMethodError is Error, not Exception
+            } catch (e: Exception) {
+                // Robolectric fallback: NoSuchMethodError for getActiveNetwork() in older shadow
                 try {
                     @Suppress("DEPRECATION")
                     cm.activeNetworkInfo?.isConnected == true
-                } catch (e2: Throwable) {
+                } catch (e2: Exception) {
                     false
                 }
             }
@@ -151,8 +151,22 @@ class DetectionQueueRepository(
                     // Attempt detection with repository (which has its own retry logic)
                     val result = pigeonRepository.detectPigeon(bitmap)
 
-                    // Check if detection actually succeeded (not error result)
-                    if (result.description.contains("No internet") || result.description.contains("Failed to analyze")) {
+                    // FIX: Robust error detection - previous code only checked 2 phrases ("No internet", "Failed to analyze")
+                    // so timeout, 401, 403, 429, 500/503, invalid-key, model-not-found were wrongly treated as success
+                    // and saved as real pigeon then deleted from queue (data loss).
+                    // All error results have confidence == 0f and no HAS_PIGEON in description, while success has >=0.1 and contains HAS_PIGEON.
+                    val isErrorResult = result.confidence == 0f ||
+                            !result.description.contains("HAS_PIGEON:", ignoreCase = true) ||
+                            result.description.contains("No internet", ignoreCase = true) ||
+                            result.description.contains("Failed to analyze", ignoreCase = true) ||
+                            result.description.contains("timeout", ignoreCase = true) ||
+                            result.description.contains("Invalid API key", ignoreCase = true) ||
+                            result.description.contains("Access denied", ignoreCase = true) ||
+                            result.description.contains("Too many requests", ignoreCase = true) ||
+                            result.description.contains("Server error", ignoreCase = true) ||
+                            result.description.contains("API Error", ignoreCase = true)
+
+                    if (isErrorResult) {
                         // Still failing - schedule retry with backoff
                         handleRetryFailure(queued)
                         failedCount++
