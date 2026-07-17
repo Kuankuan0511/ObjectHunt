@@ -30,6 +30,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,11 +48,8 @@ import com.aai.steel.objecthunt.ui.theme.ObjectHuntTheme
 
 class MainActivity : ComponentActivity() {
     
-    // Simplified: ViewModel now creates its own Repository in init,
-    // so no Factory needed here - just use default by viewModels()
     private val viewModel: PigeonHunterViewModel by viewModels()
 
-    // Keep for UI warning (BuildConfig still accessible here too)
     private val MODEL_API_KEY = BuildConfig.MUSE_API_KEY
     
     private val requestCameraPermissionLauncher = registerForActivityResult(
@@ -72,14 +70,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Combined launcher for initial app launch - requests both at once (at launch, not during analyzing)
     private val requestMultiplePermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
         val cameraGranted = perms[Manifest.permission.CAMERA] == true
-        val locationGranted = perms[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-
         if (!cameraGranted) {
             Toast.makeText(this, "Camera permission denied", Toast.LENGTH_SHORT).show()
         }
@@ -90,7 +84,6 @@ class MainActivity : ComponentActivity() {
     ) { bitmap ->
         bitmap?.let {
             viewModel.onPhotoCaptured(it)
-            // Silent fetch - permission already requested at launch, no prompt during analyzing
             fetchCityIfPermittedSilent()
         }
     }
@@ -110,10 +103,6 @@ class MainActivity : ComponentActivity() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    /**
-     * Silent version - only fetches if permission already granted.
-     * Uses applicationContext inside ViewModel (no Activity context needed).
-     */
     private fun fetchCityIfPermittedSilent() {
         if (hasLocationPermission()) {
             viewModel.fetchCurrentLocation()
@@ -124,7 +113,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
-        // Warn if API key not set in local.properties
         if (MODEL_API_KEY.isBlank()) {
             Toast.makeText(
                 this, 
@@ -133,7 +121,6 @@ class MainActivity : ComponentActivity() {
             ).show()
         }
         
-        // Request permissions proactively at app launch (not during analyzing)
         val missingPermissions = mutableListOf<String>()
         if (!hasCameraPermission()) {
             missingPermissions.add(Manifest.permission.CAMERA)
@@ -148,7 +135,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             ObjectHuntTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    // Observe ViewModel state
                     val uiState by viewModel.uiState.collectAsState()
                     
                     ObjectHuntScreen(
@@ -161,15 +147,11 @@ class MainActivity : ComponentActivity() {
                                 requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                             }
                         },
-                        onRetakePhoto = {
-                            viewModel.onRetakePhoto()
-                        },
-                        onSave = {
-                            viewModel.onSaveCurrent()
-                        },
-                        onClearSaveMessage = {
-                            viewModel.clearSaveMessage()
-                        }
+                        onRetakePhoto = { viewModel.onRetakePhoto() },
+                        onSave = { viewModel.onSaveCurrent() },
+                        onClearSaveMessage = { viewModel.clearSaveMessage() },
+                        onSyncQueue = { viewModel.syncQueuedDetections() },
+                        onClearQueueMessage = { viewModel.clearQueueMessage() }
                     )
                 }
             }
@@ -184,7 +166,9 @@ fun ObjectHuntScreen(
     onTakePhoto: () -> Unit,
     onRetakePhoto: () -> Unit,
     onSave: () -> Unit,
-    onClearSaveMessage: () -> Unit
+    onClearSaveMessage: () -> Unit,
+    onSyncQueue: () -> Unit,
+    onClearQueueMessage: () -> Unit
 ) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -201,8 +185,40 @@ fun ObjectHuntScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
+        // Queue status banner - always visible if queued
+        if (uiState.queuedCount > 0) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "📡 Queued: ${uiState.queuedCount} pending",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (uiState.isSyncingQueue) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                    } else {
+                        OutlinedButton(onClick = onSyncQueue) {
+                            Text("Sync")
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         if (uiState.capturedBitmap == null) {
-            // Initial screen - unchanged, plus saved count
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -227,23 +243,20 @@ fun ObjectHuntScreen(
                     ) {
                         Text("📸 Take Photo")
                     }
-
                     Text(
                         text = "Muse Spark AI will analyze the image and identify pigeon types",
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(top = 16.dp)
                     )
-
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Saved: ${uiState.savedCount}/20",
+                        text = "Saved: ${uiState.savedCount}/20 | Queued: ${uiState.queuedCount}",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
         } else {
             if (isLandscape) {
-                // LANDSCAPE: Row with image left, results right
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -365,6 +378,21 @@ fun ObjectHuntScreen(
                             }
                         }
 
+                        uiState.queueMessage?.let { msg ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                                )
+                            ) {
+                                Text(
+                                    text = "📡 $msg",
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+
                         uiState.errorMessage?.let { error ->
                             Text(
                                 text = error,
@@ -373,7 +401,6 @@ fun ObjectHuntScreen(
                             )
                         }
 
-                        // Save + Retake buttons
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -399,10 +426,25 @@ fun ObjectHuntScreen(
                                 Text("Retake")
                             }
                         }
+
+                        if (uiState.queuedCount > 0) {
+                            OutlinedButton(
+                                onClick = onSyncQueue,
+                                enabled = !uiState.isSyncingQueue,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (uiState.isSyncingQueue) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Syncing ${uiState.queuedCount}...")
+                                } else {
+                                    Text("🔄 Sync ${uiState.queuedCount} queued")
+                                }
+                            }
+                        }
                     }
                 }
             } else {
-                // PORTRAIT: exact original layout + Save button
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -502,6 +544,22 @@ fun ObjectHuntScreen(
                             }
                         }
 
+                        uiState.queueMessage?.let { msg ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                                )
+                            ) {
+                                Text(
+                                    text = "📡 $msg",
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+
                         uiState.errorMessage?.let { error ->
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
@@ -515,29 +573,50 @@ fun ObjectHuntScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Button(
-                        onClick = onSave,
-                        enabled = !uiState.isAnalyzing && !uiState.isSaving,
-                        modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (uiState.isSaving) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Saving...")
-                        } else {
-                            Text("💾 Save (${uiState.savedCount}/20)")
+                        Button(
+                            onClick = onSave,
+                            enabled = !uiState.isAnalyzing && !uiState.isSaving,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (uiState.isSaving) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Saving...")
+                            } else {
+                                Text("💾 Save (${uiState.savedCount}/20)")
+                            }
+                        }
+                        Button(
+                            onClick = onRetakePhoto,
+                            enabled = !uiState.isAnalyzing && !uiState.isSaving,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Retake")
                         }
                     }
-                    Button(
-                        onClick = onRetakePhoto,
-                        enabled = !uiState.isAnalyzing && !uiState.isSaving,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Retake")
+
+                    if (uiState.queuedCount > 0) {
+                        OutlinedButton(
+                            onClick = onSyncQueue,
+                            enabled = !uiState.isSyncingQueue,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (uiState.isSyncingQueue) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Syncing ${uiState.queuedCount}...")
+                            } else {
+                                Text("🔄 Sync ${uiState.queuedCount} queued (backoff)")
+                            }
+                        }
                     }
                 }
             }
@@ -560,7 +639,6 @@ fun PigeonResultCard(result: PigeonDetectionResult) {
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header
             Text(
                 text = if (result.hasPigeon) "🐦 PIGEON FOUND!" else "❌ No Pigeon",
                 style = MaterialTheme.typography.titleLarge,
@@ -574,7 +652,6 @@ fun PigeonResultCard(result: PigeonDetectionResult) {
             Spacer(modifier = Modifier.height(12.dp))
             
             if (result.hasPigeon) {
-                // Pigeon Type
                 result.pigeonType?.let { type ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -593,7 +670,6 @@ fun PigeonResultCard(result: PigeonDetectionResult) {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 
-                // Confidence
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -611,7 +687,6 @@ fun PigeonResultCard(result: PigeonDetectionResult) {
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                // Features
                 result.features?.let { features ->
                     Text(
                         text = "Features:",
@@ -629,7 +704,6 @@ fun PigeonResultCard(result: PigeonDetectionResult) {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 
-                // Location
                 result.location?.let { location ->
                     Text(
                         text = "Location:",

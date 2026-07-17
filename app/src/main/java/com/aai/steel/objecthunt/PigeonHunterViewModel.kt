@@ -35,7 +35,11 @@ data class PigeonHunterUiState(
     val isFetchingLocation: Boolean = false,
     val isSaving: Boolean = false,
     val saveMessage: String? = null,
-    val savedCount: Int = 0
+    val savedCount: Int = 0,
+    // Queue for offline detection
+    val queuedCount: Int = 0,
+    val isSyncingQueue: Boolean = false,
+    val queueMessage: String? = null
 )
 
 /**
@@ -49,6 +53,8 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
 
     private val repository: PigeonRepository
     private val savedRepository: com.aai.steel.objecthunt.data.SavedPigeonRepository
+    private val queueRepository: com.aai.steel.objecthunt.data.DetectionQueueRepository
+    private val networkMonitor: com.aai.steel.objecthunt.data.NetworkMonitor
 
     init {
         val apiService = PigeonRepository.createApiService()
@@ -58,6 +64,10 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             model = BuildConfig.MUSE_API_MODEL
         )
         savedRepository = com.aai.steel.objecthunt.data.SavedPigeonRepository.fromContext(getApplication())
+        queueRepository = com.aai.steel.objecthunt.data.DetectionQueueRepository.fromContext(
+            getApplication(), repository
+        )
+        networkMonitor = com.aai.steel.objecthunt.data.NetworkMonitor(getApplication())
         Log.d("PigeonHunterVM", "ViewModel init - repo created with model ${BuildConfig.MUSE_API_MODEL}")
 
         // Load saved count initially and keep it in sync via Flow
@@ -78,6 +88,31 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
                 }
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Failed to collect saved flow", e)
+            }
+        }
+
+        // Keep queuedCount in sync
+        viewModelScope.launch {
+            try {
+                queueRepository.getQueuedFlow().collect { list ->
+                    _uiState.value = _uiState.value.copy(queuedCount = list.size)
+                }
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Failed to collect queued flow", e)
+            }
+        }
+
+        // Auto-sync when connectivity restored - handles race conditions via distinctUntilChanged + Mutex
+        viewModelScope.launch {
+            try {
+                networkMonitor.observe().collect { isAvailable ->
+                    Log.d("PigeonHunterVM", "Network available: $isAvailable, queued=${_uiState.value.queuedCount}")
+                    if (isAvailable && _uiState.value.queuedCount > 0) {
+                        syncQueuedDetections()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Network monitor failed", e)
             }
         }
     }
@@ -114,31 +149,133 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             try {
                 Log.d("PigeonHunterVM", "Starting analysis via Repository...")
                 val result = repository.detectPigeon(bitmap)
-                _uiState.value = _uiState.value.copy(
-                    pigeonResult = result,
-                    isAnalyzing = false
-                )
-                Log.d("PigeonHunterVM", "Analysis complete. Has pigeon: ${result.hasPigeon}")
+
+                // Check if result is actually a network error - queue if so
+                val isNetworkError = result.description.contains("No internet", ignoreCase = true) ||
+                        result.description.contains("Failed to analyze", ignoreCase = true) &&
+                        (result.description.contains("Unable to resolve host", ignoreCase = true) ||
+                        result.description.contains("timeout", ignoreCase = true))
+
+                if (isNetworkError && !networkMonitor.isCurrentlyAvailable()) {
+                    Log.d("PigeonHunterVM", "Network down, queuing detection")
+                    queueRepository.enqueue(bitmap, _uiState.value.location)
+                    _uiState.value = _uiState.value.copy(
+                        isAnalyzing = false,
+                        queueMessage = "No internet - queued (${_uiState.value.queuedCount + 1} pending), will sync when online",
+                        pigeonResult = PigeonDetectionResult(
+                            hasPigeon = false,
+                            pigeonType = null,
+                            confidence = 0f,
+                            features = null,
+                            location = null,
+                            description = "Queued for later - no internet",
+                            rawResponse = ""
+                        )
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        pigeonResult = result,
+                        isAnalyzing = false
+                    )
+                    Log.d("PigeonHunterVM", "Analysis complete. Has pigeon: ${result.hasPigeon}")
+                }
+
             } catch (e: SecurityException) {
                 Log.e("PigeonHunterVM", "Location permission is not granted", e)
 
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Error analyzing image", e)
-                _uiState.value = _uiState.value.copy(
-                    isAnalyzing = false,
-                    errorMessage = "Error: ${e.message}",
-                    pigeonResult = PigeonDetectionResult(
-                        hasPigeon = false,
-                        pigeonType = null,
-                        confidence = 0f,
-                        features = null,
-                        location = null,
-                        description = "Error: ${e.message}",
-                        rawResponse = ""
+                // Check if exception is network-related -> queue with backoff
+                val isNetwork = e.message?.let {
+                    it.contains("Unable to resolve host", ignoreCase = true) ||
+                    it.contains("timeout", ignoreCase = true) ||
+                    it.contains("No internet", ignoreCase = true)
+                } ?: false
+
+                if (isNetwork) {
+                    try {
+                        queueRepository.enqueue(bitmap, _uiState.value.location)
+                        _uiState.value = _uiState.value.copy(
+                            isAnalyzing = false,
+                            queueMessage = "Network error - queued, will retry with backoff",
+                            pigeonResult = PigeonDetectionResult(
+                                hasPigeon = false,
+                                pigeonType = null,
+                                confidence = 0f,
+                                features = null,
+                                location = null,
+                                description = "Queued due to network error",
+                                rawResponse = ""
+                            )
+                        )
+                    } catch (queueEx: Exception) {
+                        Log.e("PigeonHunterVM", "Failed to queue", queueEx)
+                        _uiState.value = _uiState.value.copy(
+                            isAnalyzing = false,
+                            errorMessage = "Error: ${e.message}"
+                        )
+                    }
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        isAnalyzing = false,
+                        errorMessage = "Error: ${e.message}",
+                        pigeonResult = PigeonDetectionResult(
+                            hasPigeon = false,
+                            pigeonType = null,
+                            confidence = 0f,
+                            features = null,
+                            location = null,
+                            description = "Error: ${e.message}",
+                            rawResponse = ""
+                        )
                     )
+                }
+            }
+        }
+    }
+
+    /**
+     * Manually trigger sync of queued detections - with exponential backoff and concurrency protection
+     */
+    fun syncQueuedDetections() {
+        if (_uiState.value.isSyncingQueue) {
+            Log.d("PigeonHunterVM", "Already syncing, skipping")
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSyncingQueue = true, queueMessage = "Syncing queued detections...")
+            try {
+                val result = queueRepository.syncPending(getApplication())
+                when (result) {
+                    is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.Synced -> {
+                        _uiState.value = _uiState.value.copy(
+                            isSyncingQueue = false,
+                            queueMessage = if (result.success > 0) "Synced ${result.success} queued, ${result.failed} failed" else null
+                        )
+                    }
+                    is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.NoNetwork -> {
+                        _uiState.value = _uiState.value.copy(
+                            isSyncingQueue = false,
+                            queueMessage = "Still offline - ${result}"
+                        )
+                    }
+                    is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.NothingToSync -> {
+                        _uiState.value = _uiState.value.copy(isSyncingQueue = false, queueMessage = null)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Sync failed", e)
+                _uiState.value = _uiState.value.copy(
+                    isSyncingQueue = false,
+                    queueMessage = "Sync failed: ${e.message}"
                 )
             }
         }
+    }
+
+    fun clearQueueMessage() {
+        _uiState.value = _uiState.value.copy(queueMessage = null)
     }
 
 
