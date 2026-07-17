@@ -29,12 +29,12 @@ class NetworkMonitor(private val context: Context) {
                 @Suppress("DEPRECATION")
                 cm.activeNetworkInfo?.isConnected == true
             }
-        } catch (e: Exception) {
-            // Robolectric fallback
+        } catch (e: Throwable) {
+            // Robolectric: NoSuchMethodError is Error, not Exception
             try {
                 @Suppress("DEPRECATION")
                 cm.activeNetworkInfo?.isConnected == true
-            } catch (e2: Exception) {
+            } catch (e2: Throwable) {
                 false
             }
         }

@@ -6,6 +6,8 @@ import android.util.Log
 import com.aai.steel.objecthunt.PigeonDetectionResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
@@ -17,6 +19,8 @@ import java.security.MessageDigest
 class SavedPigeonRepository(
     private val dao: PigeonDao
 ) {
+    // Mutex to prevent concurrent saves racing past 20 limit - fixes concurrency bug
+    private val saveMutex = Mutex()
 
     fun getSavedPigeonsFlow(): Flow<List<PigeonEntity>> = dao.getAllFlow()
 
@@ -37,39 +41,42 @@ class SavedPigeonRepository(
      * Save current hunt: bitmap + detection result + city
      * Returns Saved with new id, or AlreadyExists if same image already saved
      * Duplicate detection via SHA-256 hash of imageBytes
+     * Thread-safe via Mutex to prevent race past 20 limit
      */
     suspend fun savePigeon(
         bitmap: Bitmap,
         result: PigeonDetectionResult?,
         city: String?
-    ): SaveResult = withContext(Dispatchers.IO) {
-        val imageBytes = bitmapToByteArray(bitmap)
-        val hash = sha256(imageBytes)
+    ): SaveResult = saveMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val imageBytes = bitmapToByteArray(bitmap)
+            val hash = sha256(imageBytes)
 
-        // Check duplicate
-        val existing = dao.getByHash(hash)
-        if (existing != null) {
-            Log.d("SavedPigeonRepo", "Duplicate image detected, hash=$hash, existingId=${existing.id}")
-            return@withContext SaveResult.AlreadyExists(existing.id)
+            // Check duplicate
+            val existing = dao.getByHash(hash)
+            if (existing != null) {
+                Log.d("SavedPigeonRepo", "Duplicate image detected, hash=$hash, existingId=${existing.id}")
+                return@withContext SaveResult.AlreadyExists(existing.id)
+            }
+
+            val entity = PigeonEntity(
+                timestamp = System.currentTimeMillis(),
+                pigeonType = result?.pigeonType,
+                confidence = result?.confidence ?: 0f,
+                features = result?.features,
+                pigeonLocationInImage = result?.location,
+                city = city,
+                description = result?.description ?: "No analysis",
+                rawResponse = result?.rawResponse ?: "",
+                imageBytes = imageBytes,
+                imageHash = hash
+            )
+
+            // Enforces max 20 - deletes oldest if needed
+            val insertedId = dao.insertWithLimit(entity, limit = 20)
+            Log.d("SavedPigeonRepo", "Saved pigeon id=$insertedId, hash=$hash, city=$city, type=${result?.pigeonType}, total=${dao.count()}")
+            SaveResult.Saved(insertedId)
         }
-
-        val entity = PigeonEntity(
-            timestamp = System.currentTimeMillis(),
-            pigeonType = result?.pigeonType,
-            confidence = result?.confidence ?: 0f,
-            features = result?.features,
-            pigeonLocationInImage = result?.location,
-            city = city,
-            description = result?.description ?: "No analysis",
-            rawResponse = result?.rawResponse ?: "",
-            imageBytes = imageBytes,
-            imageHash = hash
-        )
-
-        // Enforces max 20 - deletes oldest if needed
-        val insertedId = dao.insertWithLimit(entity, limit = 20)
-        Log.d("SavedPigeonRepo", "Saved pigeon id=$insertedId, hash=$hash, city=$city, type=${result?.pigeonType}, total=${dao.count()}")
-        SaveResult.Saved(insertedId)
     }
 
     private fun sha256(bytes: ByteArray): String {

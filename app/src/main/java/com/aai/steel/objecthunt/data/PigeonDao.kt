@@ -19,7 +19,7 @@ interface PigeonDao {
     @Query("SELECT COUNT(*) FROM saved_pigeons")
     suspend fun count(): Int
 
-    @Query("SELECT * FROM saved_pigeons ORDER BY timestamp ASC LIMIT 1")
+    @Query("SELECT * FROM saved_pigeons ORDER BY timestamp ASC, id ASC LIMIT 1")
     suspend fun getOldest(): PigeonEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -35,9 +35,9 @@ interface PigeonDao {
     suspend fun getByHash(hash: String): PigeonEntity?
 
     /**
-     * Delete N oldest entries based on timestamp ASC
+     * Delete N oldest entries based on timestamp ASC, id ASC for determinism when timestamps equal
      */
-    @Query("DELETE FROM saved_pigeons WHERE id IN (SELECT id FROM saved_pigeons ORDER BY timestamp ASC LIMIT :n)")
+    @Query("DELETE FROM saved_pigeons WHERE id IN (SELECT id FROM saved_pigeons ORDER BY timestamp ASC, id ASC LIMIT :n)")
     suspend fun deleteOldestN(n: Int)
 
     /**

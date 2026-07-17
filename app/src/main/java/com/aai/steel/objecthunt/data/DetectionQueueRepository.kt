@@ -77,12 +77,12 @@ class DetectionQueueRepository(
                     @Suppress("DEPRECATION")
                     cm.activeNetworkInfo?.isConnected == true
                 }
-            } catch (e: Exception) {
-                // Robolectric fallback: NoSuchMethodError for getActiveNetwork() in older shadow
+            } catch (e: Throwable) {
+                // Robolectric fallback: NoSuchMethodError is Error, not Exception
                 try {
                     @Suppress("DEPRECATION")
                     cm.activeNetworkInfo?.isConnected == true
-                } catch (e2: Exception) {
+                } catch (e2: Throwable) {
                     false
                 }
             }
