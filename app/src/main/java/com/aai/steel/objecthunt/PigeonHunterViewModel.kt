@@ -236,6 +236,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
 
     /**
      * Manually trigger sync of queued detections - with exponential backoff and concurrency protection
+     * Now with auto-retry: if sync has failures, schedule next sync after min(nextRetryAt - now)
      */
     fun syncQueuedDetections() {
         if (_uiState.value.isSyncingQueue) {
@@ -249,15 +250,42 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
                 val result = queueRepository.syncPending(getApplication())
                 when (result) {
                     is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.Synced -> {
-                        _uiState.value = _uiState.value.copy(
-                            isSyncingQueue = false,
-                            queueMessage = if (result.success > 0) "Synced ${result.success} queued, ${result.failed} failed" else null
-                        )
+                        if (result.failed > 0) {
+                            // Some failed, need to schedule auto-retry with backoff
+                            val allQueued = queueRepository.getQueuedDao().getAll()
+                            val retrying = allQueued.filter { it.status == "RETRYING" }
+                            if (retrying.isNotEmpty()) {
+                                val minNextRetry = retrying.minOf { it.nextRetryAt }
+                                val delayMs = (minNextRetry - System.currentTimeMillis()).coerceAtLeast(0L)
+                                _uiState.value = _uiState.value.copy(
+                                    isSyncingQueue = false,
+                                    queueMessage = "Synced ${result.success}, ${result.failed} failed - retrying in ${delayMs/1000}s (backoff)"
+                                )
+                                // Auto-retry after backoff delay - this makes backoff actually run
+                                viewModelScope.launch {
+                                    kotlinx.coroutines.delay(delayMs)
+                                    if (_uiState.value.queuedCount > 0) {
+                                        Log.d("PigeonHunterVM", "Auto-retrying after backoff ${delayMs}ms")
+                                        syncQueuedDetections()
+                                    }
+                                }
+                            } else {
+                                _uiState.value = _uiState.value.copy(
+                                    isSyncingQueue = false,
+                                    queueMessage = "Synced ${result.success} queued, ${result.failed} failed"
+                                )
+                            }
+                        } else {
+                            _uiState.value = _uiState.value.copy(
+                                isSyncingQueue = false,
+                                queueMessage = if (result.success > 0) "Synced ${result.success} queued!" else null
+                            )
+                        }
                     }
                     is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.NoNetwork -> {
                         _uiState.value = _uiState.value.copy(
                             isSyncingQueue = false,
-                            queueMessage = "Still offline - ${result}"
+                            queueMessage = "Still offline - queued ${result}"
                         )
                     }
                     is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.NothingToSync -> {

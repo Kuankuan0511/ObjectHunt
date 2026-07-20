@@ -93,6 +93,11 @@ class DetectionQueueRepository(
 
     suspend fun getQueuedCount(): Int = queuedDao.count()
 
+    suspend fun getAllQueued(): List<QueuedDetectionEntity> = queuedDao.getAll()
+
+    // Exposed for ViewModel auto-retry calc and tests - allows getting DAO for advanced queries
+    fun getQueuedDao(): QueuedDetectionDao = queuedDao
+
     /**
      * Enqueue a detection request when network is down.
      * Thread-safe via Mutex to prevent race conditions with concurrent enqueues.
