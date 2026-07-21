@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt.android)
 }
 
 android {
@@ -92,6 +93,9 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
 
+    // Hilt - dependency injection
+    implementation(libs.hilt.android)
+
     testImplementation(libs.junit)
     testImplementation(libs.room.testing)
     testImplementation(libs.androidx.test.core)
@@ -104,6 +108,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
-    // KSP - Room compiler
+    // KSP - Room + Hilt compilers
     ksp(libs.room.compiler)
+    ksp(libs.hilt.compiler)
 }

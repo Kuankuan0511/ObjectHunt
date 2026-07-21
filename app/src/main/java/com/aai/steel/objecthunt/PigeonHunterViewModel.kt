@@ -1,17 +1,20 @@
 package com.aai.steel.objecthunt
 
 import android.annotation.SuppressLint
-import android.app.Application
 import android.content.Context
 import android.location.Geocoder
 import android.os.Build
 import android.graphics.Bitmap
 import android.util.Log
-import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aai.steel.objecthunt.data.DetectionQueueRepository
+import com.aai.steel.objecthunt.data.NetworkMonitor
+import com.aai.steel.objecthunt.data.SavedPigeonRepository
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import javax.inject.Inject
 import kotlin.coroutines.resume
 
 /**
@@ -30,47 +34,33 @@ data class PigeonHunterUiState(
     val pigeonResult: PigeonDetectionResult? = null,
     val isAnalyzing: Boolean = false,
     val errorMessage: String? = null,
-    /** City name where the photo was taken (e.g., "San Francisco") */
     val location: String? = null,
     val isFetchingLocation: Boolean = false,
     val isSaving: Boolean = false,
     val saveMessage: String? = null,
     val savedCount: Int = 0,
-    // Queue for offline detection
     val queuedCount: Int = 0,
     val isSyncingQueue: Boolean = false,
     val queueMessage: String? = null
 )
 
 /**
- * ViewModel using init block instead of a Factory in Activity.
- * Repository is created in init, Activity can just do: by viewModels()
- * 
- * Uses Activity Context passed from caller (converted to applicationContext internally
- * for FusedLocationProviderClient to avoid leaks).
+ * ViewModel with Hilt DI - dependencies injected, no manual creation
+ * Uses applicationContext via Hilt @ApplicationContext qualifier
  */
-class PigeonHunterViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val repository: PigeonRepository
-    private val savedRepository: com.aai.steel.objecthunt.data.SavedPigeonRepository
-    private val queueRepository: com.aai.steel.objecthunt.data.DetectionQueueRepository
-    private val networkMonitor: com.aai.steel.objecthunt.data.NetworkMonitor
+@HiltViewModel
+class PigeonHunterViewModel @Inject constructor(
+    private val repository: PigeonRepository,
+    private val savedRepository: SavedPigeonRepository,
+    private val queueRepository: DetectionQueueRepository,
+    private val networkMonitor: NetworkMonitor,
+    @ApplicationContext private val appContext: Context
+) : ViewModel() {
 
     init {
-        val apiService = PigeonRepository.createApiService()
-        repository = PigeonRepository(
-            apiService = apiService,
-            apiKey = BuildConfig.MUSE_API_KEY,
-            model = BuildConfig.MUSE_API_MODEL
-        )
-        savedRepository = com.aai.steel.objecthunt.data.SavedPigeonRepository.fromContext(getApplication())
-        queueRepository = com.aai.steel.objecthunt.data.DetectionQueueRepository.fromContext(
-            getApplication(), repository
-        )
-        networkMonitor = com.aai.steel.objecthunt.data.NetworkMonitor(getApplication())
-        Log.d("PigeonHunterVM", "ViewModel init - repo created with model ${BuildConfig.MUSE_API_MODEL}")
+        Log.d("PigeonHunterVM", "Hilt ViewModel init - all repos injected")
 
-        // Load saved count initially and keep it in sync via Flow
+        // Keep savedCount in sync
         viewModelScope.launch {
             try {
                 val count = savedRepository.getCount()
@@ -80,7 +70,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-        // Keep savedCount always in sync with DB (fixes UI bug where count resets to 0)
         viewModelScope.launch {
             try {
                 savedRepository.getSavedPigeonsFlow().collect { list ->
@@ -91,7 +80,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-        // Keep queuedCount in sync
         viewModelScope.launch {
             try {
                 queueRepository.getQueuedFlow().collect { list ->
@@ -102,7 +90,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-        // Auto-sync when connectivity restored - handles race conditions via distinctUntilChanged + Mutex
+        // Auto-sync when connectivity restored
         viewModelScope.launch {
             try {
                 networkMonitor.observe().collect { isAvailable ->
@@ -120,7 +108,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
     private val _uiState = MutableStateFlow(PigeonHunterUiState())
     val uiState: StateFlow<PigeonHunterUiState> = _uiState.asStateFlow()
 
-    // Expose saved pigeons flow for history screen
     val savedPigeonsFlow = savedRepository.getSavedPigeonsFlow()
     
     fun onPhotoCaptured(bitmap: Bitmap) {
@@ -130,16 +117,13 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             isAnalyzing = true,
             pigeonResult = null,
             errorMessage = null,
-            saveMessage = null // clear previous save message on new photo
+            saveMessage = null
         )
         analyzePhoto(bitmap)
-        // Don't call fetchCurrentLocation() here - Activity handles it via fetchCityIfPermittedSilent()
-        // with permission check at launch, avoiding double fetch and SecurityException
     }
 
     fun onRetakePhoto() {
         Log.d("PigeonHunterVM", "Resetting for new photo, preserving savedCount=${_uiState.value.savedCount}")
-        // Preserve savedCount - was bug: PigeonHunterUiState() reset it to 0
         val currentSavedCount = _uiState.value.savedCount
         _uiState.value = PigeonHunterUiState(savedCount = currentSavedCount)
     }
@@ -150,7 +134,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
                 Log.d("PigeonHunterVM", "Starting analysis via Repository...")
                 val result = repository.detectPigeon(bitmap)
 
-                // Check if result is actually a network error - queue if so
+                // Queue if network error and no network
                 val isNetworkError = result.description.contains("No internet", ignoreCase = true) ||
                         result.description.contains("Failed to analyze", ignoreCase = true) &&
                         (result.description.contains("Unable to resolve host", ignoreCase = true) ||
@@ -185,7 +169,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
 
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Error analyzing image", e)
-                // Check if exception is network-related -> queue with backoff
                 val isNetwork = e.message?.let {
                     it.contains("Unable to resolve host", ignoreCase = true) ||
                     it.contains("timeout", ignoreCase = true) ||
@@ -234,10 +217,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
-    /**
-     * Manually trigger sync of queued detections - with exponential backoff and concurrency protection
-     * Now with auto-retry: if sync has failures, schedule next sync after min(nextRetryAt - now)
-     */
     fun syncQueuedDetections() {
         if (_uiState.value.isSyncingQueue) {
             Log.d("PigeonHunterVM", "Already syncing, skipping")
@@ -247,12 +226,11 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSyncingQueue = true, queueMessage = "Syncing queued detections...")
             try {
-                val result = queueRepository.syncPending(getApplication())
+                val result = queueRepository.syncPending(appContext)
                 when (result) {
-                    is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.Synced -> {
+                    is DetectionQueueRepository.SyncResult.Synced -> {
                         if (result.failed > 0) {
-                            // Some failed, need to schedule auto-retry with backoff
-                            val allQueued = queueRepository.getQueuedDao().getAll()
+                            val allQueued = queueRepository.getAllQueued()
                             val retrying = allQueued.filter { it.status == "RETRYING" }
                             if (retrying.isNotEmpty()) {
                                 val minNextRetry = retrying.minOf { it.nextRetryAt }
@@ -261,7 +239,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
                                     isSyncingQueue = false,
                                     queueMessage = "Synced ${result.success}, ${result.failed} failed - retrying in ${delayMs/1000}s (backoff)"
                                 )
-                                // Auto-retry after backoff delay - this makes backoff actually run
                                 viewModelScope.launch {
                                     kotlinx.coroutines.delay(delayMs)
                                     if (_uiState.value.queuedCount > 0) {
@@ -282,13 +259,13 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
                             )
                         }
                     }
-                    is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.NoNetwork -> {
+                    is DetectionQueueRepository.SyncResult.NoNetwork -> {
                         _uiState.value = _uiState.value.copy(
                             isSyncingQueue = false,
                             queueMessage = "Still offline - queued ${result}"
                         )
                     }
-                    is com.aai.steel.objecthunt.data.DetectionQueueRepository.SyncResult.NothingToSync -> {
+                    is DetectionQueueRepository.SyncResult.NothingToSync -> {
                         _uiState.value = _uiState.value.copy(isSyncingQueue = false, queueMessage = null)
                     }
                 }
@@ -306,7 +283,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
         _uiState.value = _uiState.value.copy(queueMessage = null)
     }
 
-
     @SuppressLint("MissingPermission")
     fun fetchCurrentLocation() {
         if (_uiState.value.isFetchingLocation) {
@@ -321,7 +297,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             )
 
             try {
-                val city = getCityFromCurrentLocation(getApplication())
+                val city = getCityFromCurrentLocation(appContext)
 
                 if (city != null) {
                     Log.d("PigeonHunterVM", "Location resolved to city: $city")
@@ -434,10 +410,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             }
         }
     
-    /**
-     * Save current hunt to local DB (max 20, oldest deleted)
-     * Repository handles limit enforcement
-     */
     fun onSaveCurrent() {
         val bitmap = _uiState.value.capturedBitmap
         val result = _uiState.value.pigeonResult
@@ -454,7 +426,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
             _uiState.value = _uiState.value.copy(isSaving = true, saveMessage = null, errorMessage = null)
             try {
                 when (val saveResult = savedRepository.savePigeon(bitmap, result, city)) {
-                    is com.aai.steel.objecthunt.data.SavedPigeonRepository.SaveResult.Saved -> {
+                    is SavedPigeonRepository.SaveResult.Saved -> {
                         val newCount = savedRepository.getCount()
                         _uiState.value = _uiState.value.copy(
                             isSaving = false,
@@ -463,7 +435,7 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
                         )
                         Log.d("PigeonHunterVM", "Saved pigeon id=${saveResult.id}, count=$newCount")
                     }
-                    is com.aai.steel.objecthunt.data.SavedPigeonRepository.SaveResult.AlreadyExists -> {
+                    is SavedPigeonRepository.SaveResult.AlreadyExists -> {
                         val count = savedRepository.getCount()
                         _uiState.value = _uiState.value.copy(
                             isSaving = false,
@@ -491,7 +463,6 @@ class PigeonHunterViewModel(application: Application) : AndroidViewModel(applica
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
 
-    // For history screen - delete
     fun deleteSaved(id: Long) {
         viewModelScope.launch {
             try {

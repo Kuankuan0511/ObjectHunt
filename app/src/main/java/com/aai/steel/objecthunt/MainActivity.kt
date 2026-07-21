@@ -45,7 +45,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.aai.steel.objecthunt.ui.theme.ObjectHuntTheme
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     
     private val viewModel: PigeonHunterViewModel by viewModels()
@@ -253,6 +255,17 @@ fun ObjectHuntScreen(
                         text = "Saved: ${uiState.savedCount}/20 | Queued: ${uiState.queuedCount}",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        Button(onClick = onClearSaveMessage, modifier = Modifier.padding(30.dp)) {
+                            Text("Remove safe data")
+                        }
+                        Button(onClick = {}, modifier = Modifier.padding(30.dp)) {
+                            Text("asdas")
+                        }
+
+                    }
                 }
             }
         } else {

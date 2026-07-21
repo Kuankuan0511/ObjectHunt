@@ -20,6 +20,7 @@ ksp = "2.0.21-1.0.28"
 androidxTestCore = "1.6.1"
 robolectric = "4.12.2"
 coroutinesTest = "1.7.3"
+hilt = "2.51.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -52,10 +53,13 @@ room-testing = { group = "androidx.room", name = "room-testing", version.ref = "
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
+hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+hilt-android = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 
