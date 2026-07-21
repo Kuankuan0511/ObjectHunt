@@ -108,8 +108,16 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
-    // KSP - Room + Hilt compilers + javapoet fix for hiltAggregateDeps
+    // KSP - Room + Hilt compilers
     ksp(libs.room.compiler)
     ksp(libs.hilt.compiler)
-    ksp(libs.javapoet)
+    // Force javapoet to fix hiltAggregateDepsDebug NoSuchMethodError canonicalName()
+    ksp("com.squareup:javapoet:1.13.0")
+}
+
+// Fix javapoet version conflict: Room + Hilt both bring javapoet, Gradle picks older without canonicalName()
+configurations.configureEach {
+    resolutionStrategy {
+        force("com.squareup:javapoet:1.13.0")
+    }
 }
