@@ -35,14 +35,20 @@ sealed interface PigeonHunterUiState {
     val queuedCount: Int
     val location: String?
     val isFetchingLocation: Boolean
+    val saveMessage: String?
+    val queueMessage: String?
+    val isSaving: Boolean
+    val isSyncingQueue: Boolean
 
     data class Initial(
         override val savedCount: Int = 0,
         override val queuedCount: Int = 0,
         override val location: String? = null,
         override val isFetchingLocation: Boolean = false,
-        val saveMessage: String? = null,
-        val queueMessage: String? = null
+        override val saveMessage: String? = null,
+        override val queueMessage: String? = null,
+        override val isSaving: Boolean = false,
+        override val isSyncingQueue: Boolean = false
     ) : PigeonHunterUiState
 
     data class PhotoCaptured(
@@ -50,7 +56,11 @@ sealed interface PigeonHunterUiState {
         override val savedCount: Int,
         override val queuedCount: Int,
         override val location: String?,
-        override val isFetchingLocation: Boolean
+        override val isFetchingLocation: Boolean,
+        override val saveMessage: String? = null,
+        override val queueMessage: String? = null,
+        override val isSaving: Boolean = false,
+        override val isSyncingQueue: Boolean = false
     ) : PigeonHunterUiState
 
     data class Analyzing(
@@ -58,7 +68,11 @@ sealed interface PigeonHunterUiState {
         override val savedCount: Int,
         override val queuedCount: Int,
         override val location: String?,
-        override val isFetchingLocation: Boolean
+        override val isFetchingLocation: Boolean,
+        override val saveMessage: String? = null,
+        override val queueMessage: String? = null,
+        override val isSaving: Boolean = false,
+        override val isSyncingQueue: Boolean = false
     ) : PigeonHunterUiState
 
     data class Success(
@@ -68,9 +82,10 @@ sealed interface PigeonHunterUiState {
         override val queuedCount: Int,
         override val location: String?,
         override val isFetchingLocation: Boolean,
-        val isSaving: Boolean = false,
-        val saveMessage: String? = null,
-        val queueMessage: String? = null
+        override val isSaving: Boolean = false,
+        override val saveMessage: String? = null,
+        override val queueMessage: String? = null,
+        override val isSyncingQueue: Boolean = false
     ) : PigeonHunterUiState
 
     data class Queued(
@@ -79,8 +94,11 @@ sealed interface PigeonHunterUiState {
         override val queuedCount: Int,
         override val location: String?,
         override val isFetchingLocation: Boolean,
-        val queueMessage: String,
-        val result: PigeonDetectionResult? = null
+        override val queueMessage: String,
+        val result: PigeonDetectionResult? = null,
+        override val saveMessage: String? = null,
+        override val isSaving: Boolean = false,
+        override val isSyncingQueue: Boolean = false
     ) : PigeonHunterUiState
 
     data class Error(
@@ -90,8 +108,10 @@ sealed interface PigeonHunterUiState {
         override val queuedCount: Int,
         override val location: String?,
         override val isFetchingLocation: Boolean,
-        val saveMessage: String? = null,
-        val queueMessage: String? = null
+        override val saveMessage: String? = null,
+        override val queueMessage: String? = null,
+        override val isSaving: Boolean = false,
+        override val isSyncingQueue: Boolean = false
     ) : PigeonHunterUiState
 
     data class Saving(
@@ -101,7 +121,10 @@ sealed interface PigeonHunterUiState {
         override val queuedCount: Int,
         override val location: String?,
         override val isFetchingLocation: Boolean,
-        val queueMessage: String? = null
+        override val saveMessage: String? = null,
+        override val queueMessage: String? = null,
+        override val isSaving: Boolean = true,
+        override val isSyncingQueue: Boolean = false
     ) : PigeonHunterUiState
 
     data class SyncingQueue(
@@ -111,7 +134,10 @@ sealed interface PigeonHunterUiState {
         override val location: String?,
         override val isFetchingLocation: Boolean,
         val result: PigeonDetectionResult? = null,
-        val saveMessage: String? = null
+        override val saveMessage: String? = null,
+        override val queueMessage: String? = null,
+        override val isSaving: Boolean = false,
+        override val isSyncingQueue: Boolean = true
     ) : PigeonHunterUiState
 }
 
