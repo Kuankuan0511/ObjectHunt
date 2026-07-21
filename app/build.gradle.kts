@@ -108,7 +108,8 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
-    // KSP - Room + Hilt compilers
+    // KSP - Room + Hilt compilers + javapoet fix for hiltAggregateDeps
     ksp(libs.room.compiler)
     ksp(libs.hilt.compiler)
+    ksp(libs.javapoet)
 }
