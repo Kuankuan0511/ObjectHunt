@@ -27,26 +27,117 @@ import javax.inject.Inject
 import kotlin.coroutines.resume
 
 /**
- * UI State for the Pigeon Hunter screen
+ * Sealed UI State - replaces boolean soup (isAnalyzing, isSaving, etc.)
+ * Each state only holds data it needs, impossible states impossible by construction.
  */
-data class PigeonHunterUiState(
-    val capturedBitmap: Bitmap? = null,
-    val pigeonResult: PigeonDetectionResult? = null,
-    val isAnalyzing: Boolean = false,
-    val errorMessage: String? = null,
-    val location: String? = null,
-    val isFetchingLocation: Boolean = false,
-    val isSaving: Boolean = false,
-    val saveMessage: String? = null,
-    val savedCount: Int = 0,
-    val queuedCount: Int = 0,
-    val isSyncingQueue: Boolean = false,
-    val queueMessage: String? = null
-)
+sealed interface PigeonHunterUiState {
+    val savedCount: Int
+    val queuedCount: Int
+    val location: String?
+    val isFetchingLocation: Boolean
+
+    data class Initial(
+        override val savedCount: Int = 0,
+        override val queuedCount: Int = 0,
+        override val location: String? = null,
+        override val isFetchingLocation: Boolean = false,
+        val saveMessage: String? = null,
+        val queueMessage: String? = null
+    ) : PigeonHunterUiState
+
+    data class PhotoCaptured(
+        val bitmap: Bitmap,
+        override val savedCount: Int,
+        override val queuedCount: Int,
+        override val location: String?,
+        override val isFetchingLocation: Boolean
+    ) : PigeonHunterUiState
+
+    data class Analyzing(
+        val bitmap: Bitmap,
+        override val savedCount: Int,
+        override val queuedCount: Int,
+        override val location: String?,
+        override val isFetchingLocation: Boolean
+    ) : PigeonHunterUiState
+
+    data class Success(
+        val bitmap: Bitmap,
+        val result: PigeonDetectionResult,
+        override val savedCount: Int,
+        override val queuedCount: Int,
+        override val location: String?,
+        override val isFetchingLocation: Boolean,
+        val isSaving: Boolean = false,
+        val saveMessage: String? = null,
+        val queueMessage: String? = null
+    ) : PigeonHunterUiState
+
+    data class Queued(
+        val bitmap: Bitmap,
+        override val savedCount: Int,
+        override val queuedCount: Int,
+        override val location: String?,
+        override val isFetchingLocation: Boolean,
+        val queueMessage: String,
+        val result: PigeonDetectionResult? = null
+    ) : PigeonHunterUiState
+
+    data class Error(
+        val bitmap: Bitmap?,
+        val message: String,
+        override val savedCount: Int,
+        override val queuedCount: Int,
+        override val location: String?,
+        override val isFetchingLocation: Boolean,
+        val saveMessage: String? = null,
+        val queueMessage: String? = null
+    ) : PigeonHunterUiState
+
+    data class Saving(
+        val bitmap: Bitmap,
+        val result: PigeonDetectionResult,
+        override val savedCount: Int,
+        override val queuedCount: Int,
+        override val location: String?,
+        override val isFetchingLocation: Boolean,
+        val queueMessage: String? = null
+    ) : PigeonHunterUiState
+
+    data class SyncingQueue(
+        val bitmap: Bitmap?,
+        override val savedCount: Int,
+        override val queuedCount: Int,
+        override val location: String?,
+        override val isFetchingLocation: Boolean,
+        val result: PigeonDetectionResult? = null,
+        val saveMessage: String? = null
+    ) : PigeonHunterUiState
+}
 
 /**
- * ViewModel with Hilt DI - dependencies injected, no manual creation
- * Uses applicationContext via Hilt @ApplicationContext qualifier
+ * Extension to update common fields across all sealed states
+ */
+private fun PigeonHunterUiState.withCounts(
+    savedCount: Int = this.savedCount,
+    queuedCount: Int = this.queuedCount,
+    location: String? = this.location,
+    isFetchingLocation: Boolean = this.isFetchingLocation
+): PigeonHunterUiState {
+    return when (this) {
+        is PigeonHunterUiState.Initial -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+        is PigeonHunterUiState.PhotoCaptured -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+        is PigeonHunterUiState.Analyzing -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+        is PigeonHunterUiState.Success -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+        is PigeonHunterUiState.Queued -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+        is PigeonHunterUiState.Error -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+        is PigeonHunterUiState.Saving -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+        is PigeonHunterUiState.SyncingQueue -> copy(savedCount = savedCount, queuedCount = queuedCount, location = location, isFetchingLocation = isFetchingLocation)
+    }
+}
+
+/**
+ * ViewModel with Hilt DI - now uses sealed state
  */
 @HiltViewModel
 class PigeonHunterViewModel @Inject constructor(
@@ -58,13 +149,12 @@ class PigeonHunterViewModel @Inject constructor(
 ) : ViewModel() {
 
     init {
-        Log.d("PigeonHunterVM", "Hilt ViewModel init - all repos injected")
+        Log.d("PigeonHunterVM", "Hilt ViewModel init with sealed state")
 
-        // Keep savedCount in sync
         viewModelScope.launch {
             try {
                 val count = savedRepository.getCount()
-                _uiState.value = _uiState.value.copy(savedCount = count)
+                _uiState.value = _uiState.value.withCounts(savedCount = count)
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Failed to load saved count", e)
             }
@@ -73,7 +163,7 @@ class PigeonHunterViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 savedRepository.getSavedPigeonsFlow().collect { list ->
-                    _uiState.value = _uiState.value.copy(savedCount = list.size)
+                    _uiState.value = _uiState.value.withCounts(savedCount = list.size)
                 }
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Failed to collect saved flow", e)
@@ -83,14 +173,13 @@ class PigeonHunterViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 queueRepository.getQueuedFlow().collect { list ->
-                    _uiState.value = _uiState.value.copy(queuedCount = list.size)
+                    _uiState.value = _uiState.value.withCounts(queuedCount = list.size)
                 }
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Failed to collect queued flow", e)
             }
         }
 
-        // Auto-sync when connectivity restored
         viewModelScope.launch {
             try {
                 networkMonitor.observe().collect { isAvailable ->
@@ -105,27 +194,33 @@ class PigeonHunterViewModel @Inject constructor(
         }
     }
     
-    private val _uiState = MutableStateFlow(PigeonHunterUiState())
+    private val _uiState = MutableStateFlow<PigeonHunterUiState>(PigeonHunterUiState.Initial())
     val uiState: StateFlow<PigeonHunterUiState> = _uiState.asStateFlow()
 
     val savedPigeonsFlow = savedRepository.getSavedPigeonsFlow()
     
     fun onPhotoCaptured(bitmap: Bitmap) {
         Log.d("PigeonHunterVM", "Photo captured, starting analysis")
-        _uiState.value = _uiState.value.copy(
-            capturedBitmap = bitmap,
-            isAnalyzing = true,
-            pigeonResult = null,
-            errorMessage = null,
-            saveMessage = null
+        val current = _uiState.value
+        _uiState.value = PigeonHunterUiState.Analyzing(
+            bitmap = bitmap,
+            savedCount = current.savedCount,
+            queuedCount = current.queuedCount,
+            location = current.location,
+            isFetchingLocation = current.isFetchingLocation
         )
         analyzePhoto(bitmap)
     }
 
     fun onRetakePhoto() {
-        Log.d("PigeonHunterVM", "Resetting for new photo, preserving savedCount=${_uiState.value.savedCount}")
-        val currentSavedCount = _uiState.value.savedCount
-        _uiState.value = PigeonHunterUiState(savedCount = currentSavedCount)
+        Log.d("PigeonHunterVM", "Resetting, preserving counts")
+        val current = _uiState.value
+        _uiState.value = PigeonHunterUiState.Initial(
+            savedCount = current.savedCount,
+            queuedCount = current.queuedCount,
+            location = null,
+            isFetchingLocation = false
+        )
     }
     
     private fun analyzePhoto(bitmap: Bitmap) {
@@ -134,19 +229,23 @@ class PigeonHunterViewModel @Inject constructor(
                 Log.d("PigeonHunterVM", "Starting analysis via Repository...")
                 val result = repository.detectPigeon(bitmap)
 
-                // Queue if network error and no network
+                val current = _uiState.value
                 val isNetworkError = result.description.contains("No internet", ignoreCase = true) ||
                         result.description.contains("Failed to analyze", ignoreCase = true) &&
                         (result.description.contains("Unable to resolve host", ignoreCase = true) ||
                         result.description.contains("timeout", ignoreCase = true))
 
                 if (isNetworkError && !networkMonitor.isCurrentlyAvailable()) {
-                    Log.d("PigeonHunterVM", "Network down, queuing detection")
-                    queueRepository.enqueue(bitmap, _uiState.value.location)
-                    _uiState.value = _uiState.value.copy(
-                        isAnalyzing = false,
-                        queueMessage = "No internet - queued (${_uiState.value.queuedCount + 1} pending), will sync when online",
-                        pigeonResult = PigeonDetectionResult(
+                    Log.d("PigeonHunterVM", "Network down, queuing")
+                    queueRepository.enqueue(bitmap, current.location)
+                    _uiState.value = PigeonHunterUiState.Queued(
+                        bitmap = bitmap,
+                        savedCount = current.savedCount,
+                        queuedCount = current.queuedCount + 1,
+                        location = current.location,
+                        isFetchingLocation = false,
+                        queueMessage = "No internet - queued, will sync when online",
+                        result = PigeonDetectionResult(
                             hasPigeon = false,
                             pigeonType = null,
                             confidence = 0f,
@@ -157,60 +256,64 @@ class PigeonHunterViewModel @Inject constructor(
                         )
                     )
                 } else {
-                    _uiState.value = _uiState.value.copy(
-                        pigeonResult = result,
-                        isAnalyzing = false
+                    _uiState.value = PigeonHunterUiState.Success(
+                        bitmap = bitmap,
+                        result = result,
+                        savedCount = current.savedCount,
+                        queuedCount = current.queuedCount,
+                        location = current.location,
+                        isFetchingLocation = false
                     )
                     Log.d("PigeonHunterVM", "Analysis complete. Has pigeon: ${result.hasPigeon}")
                 }
 
             } catch (e: SecurityException) {
-                Log.e("PigeonHunterVM", "Location permission is not granted", e)
+                Log.e("PigeonHunterVM", "Location permission not granted", e)
 
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Error analyzing image", e)
+                val current = _uiState.value
+                val bitmap = when (current) {
+                    is PigeonHunterUiState.Analyzing -> current.bitmap
+                    is PigeonHunterUiState.PhotoCaptured -> current.bitmap
+                    else -> null
+                }
                 val isNetwork = e.message?.let {
                     it.contains("Unable to resolve host", ignoreCase = true) ||
                     it.contains("timeout", ignoreCase = true) ||
                     it.contains("No internet", ignoreCase = true)
                 } ?: false
 
-                if (isNetwork) {
+                if (isNetwork && bitmap != null) {
                     try {
-                        queueRepository.enqueue(bitmap, _uiState.value.location)
-                        _uiState.value = _uiState.value.copy(
-                            isAnalyzing = false,
-                            queueMessage = "Network error - queued, will retry with backoff",
-                            pigeonResult = PigeonDetectionResult(
-                                hasPigeon = false,
-                                pigeonType = null,
-                                confidence = 0f,
-                                features = null,
-                                location = null,
-                                description = "Queued due to network error",
-                                rawResponse = ""
-                            )
+                        queueRepository.enqueue(bitmap, current.location)
+                        _uiState.value = PigeonHunterUiState.Queued(
+                            bitmap = bitmap,
+                            savedCount = current.savedCount,
+                            queuedCount = current.queuedCount + 1,
+                            location = current.location,
+                            isFetchingLocation = false,
+                            queueMessage = "Network error - queued, will retry with backoff"
                         )
                     } catch (queueEx: Exception) {
                         Log.e("PigeonHunterVM", "Failed to queue", queueEx)
-                        _uiState.value = _uiState.value.copy(
-                            isAnalyzing = false,
-                            errorMessage = "Error: ${e.message}"
+                        _uiState.value = PigeonHunterUiState.Error(
+                            bitmap = bitmap,
+                            message = "Error: ${e.message}",
+                            savedCount = current.savedCount,
+                            queuedCount = current.queuedCount,
+                            location = current.location,
+                            isFetchingLocation = false
                         )
                     }
                 } else {
-                    _uiState.value = _uiState.value.copy(
-                        isAnalyzing = false,
-                        errorMessage = "Error: ${e.message}",
-                        pigeonResult = PigeonDetectionResult(
-                            hasPigeon = false,
-                            pigeonType = null,
-                            confidence = 0f,
-                            features = null,
-                            location = null,
-                            description = "Error: ${e.message}",
-                            rawResponse = ""
-                        )
+                    _uiState.value = PigeonHunterUiState.Error(
+                        bitmap = bitmap,
+                        message = "Error: ${e.message}",
+                        savedCount = current.savedCount,
+                        queuedCount = current.queuedCount,
+                        location = current.location,
+                        isFetchingLocation = false
                     )
                 }
             }
@@ -218,15 +321,32 @@ class PigeonHunterViewModel @Inject constructor(
     }
 
     fun syncQueuedDetections() {
-        if (_uiState.value.isSyncingQueue) {
+        val current = _uiState.value
+        if (current is PigeonHunterUiState.SyncingQueue) {
             Log.d("PigeonHunterVM", "Already syncing, skipping")
             return
         }
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSyncingQueue = true, queueMessage = "Syncing queued detections...")
+            val syncBitmap = when (current) {
+                is PigeonHunterUiState.Success -> current.bitmap
+                is PigeonHunterUiState.Queued -> current.bitmap
+                else -> null
+            }
+
+            _uiState.value = PigeonHunterUiState.SyncingQueue(
+                bitmap = syncBitmap,
+                savedCount = current.savedCount,
+                queuedCount = current.queuedCount,
+                location = current.location,
+                isFetchingLocation = current.isFetchingLocation,
+                result = (current as? PigeonHunterUiState.Success)?.result,
+                saveMessage = (current as? PigeonHunterUiState.Success)?.saveMessage
+            )
+
             try {
                 val result = queueRepository.syncPending(appContext)
+                val afterSync = _uiState.value
                 when (result) {
                     is DetectionQueueRepository.SyncResult.Synced -> {
                         if (result.failed > 0) {
@@ -235,8 +355,15 @@ class PigeonHunterViewModel @Inject constructor(
                             if (retrying.isNotEmpty()) {
                                 val minNextRetry = retrying.minOf { it.nextRetryAt }
                                 val delayMs = (minNextRetry - System.currentTimeMillis()).coerceAtLeast(0L)
-                                _uiState.value = _uiState.value.copy(
-                                    isSyncingQueue = false,
+                                _uiState.value = PigeonHunterUiState.Success(
+                                    bitmap = syncBitmap ?: return@launch,
+                                    result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                        ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                    savedCount = afterSync.savedCount,
+                                    queuedCount = afterSync.queuedCount,
+                                    location = afterSync.location,
+                                    isFetchingLocation = false,
+                                    saveMessage = afterSync.saveMessage,
                                     queueMessage = "Synced ${result.success}, ${result.failed} failed - retrying in ${delayMs/1000}s (backoff)"
                                 )
                                 viewModelScope.launch {
@@ -247,40 +374,71 @@ class PigeonHunterViewModel @Inject constructor(
                                     }
                                 }
                             } else {
-                                _uiState.value = _uiState.value.copy(
-                                    isSyncingQueue = false,
-                                    queueMessage = "Synced ${result.success} queued, ${result.failed} failed"
+                                _uiState.value = PigeonHunterUiState.Success(
+                                    bitmap = syncBitmap ?: return@launch,
+                                    result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                        ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                    savedCount = afterSync.savedCount,
+                                    queuedCount = afterSync.queuedCount,
+                                    location = afterSync.location,
+                                    isFetchingLocation = false,
+                                    saveMessage = "Synced ${result.success} queued!"
                                 )
                             }
                         } else {
-                            _uiState.value = _uiState.value.copy(
-                                isSyncingQueue = false,
-                                queueMessage = if (result.success > 0) "Synced ${result.success} queued!" else null
-                            )
+                            _uiState.value = when (afterSync) {
+                                is PigeonHunterUiState.SyncingQueue -> PigeonHunterUiState.Success(
+                                    bitmap = syncBitmap ?: return@launch,
+                                    result = afterSync.result ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                    savedCount = afterSync.savedCount,
+                                    queuedCount = afterSync.queuedCount,
+                                    location = afterSync.location,
+                                    isFetchingLocation = false,
+                                    saveMessage = if (result.success > 0) "Synced ${result.success} queued!" else null
+                                )
+                                else -> afterSync.withCounts()
+                            }
                         }
                     }
                     is DetectionQueueRepository.SyncResult.NoNetwork -> {
-                        _uiState.value = _uiState.value.copy(
-                            isSyncingQueue = false,
-                            queueMessage = "Still offline - queued ${result}"
+                        _uiState.value = PigeonHunterUiState.Success(
+                            bitmap = syncBitmap ?: return@launch,
+                            result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                ?: PigeonDetectionResult(false, null, 0f, null, null, "", ""),
+                            savedCount = afterSync.savedCount,
+                            queuedCount = afterSync.queuedCount,
+                            location = afterSync.location,
+                            isFetchingLocation = false,
+                            queueMessage = "Still offline"
                         )
                     }
                     is DetectionQueueRepository.SyncResult.NothingToSync -> {
-                        _uiState.value = _uiState.value.copy(isSyncingQueue = false, queueMessage = null)
+                        _uiState.value = afterSync.withCounts()
                     }
                 }
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Sync failed", e)
-                _uiState.value = _uiState.value.copy(
-                    isSyncingQueue = false,
-                    queueMessage = "Sync failed: ${e.message}"
+                val after = _uiState.value
+                _uiState.value = PigeonHunterUiState.Error(
+                    bitmap = syncBitmap,
+                    message = "Sync failed: ${e.message}",
+                    savedCount = after.savedCount,
+                    queuedCount = after.queuedCount,
+                    location = after.location,
+                    isFetchingLocation = false
                 )
             }
         }
     }
 
     fun clearQueueMessage() {
-        _uiState.value = _uiState.value.copy(queueMessage = null)
+        val current = _uiState.value
+        _uiState.value = when (current) {
+            is PigeonHunterUiState.Success -> current.copy(queueMessage = null)
+            is PigeonHunterUiState.Error -> current.copy(queueMessage = null)
+            is PigeonHunterUiState.Initial -> current.copy(queueMessage = null)
+            else -> current
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -291,38 +449,54 @@ class PigeonHunterViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isFetchingLocation = true,
-                errorMessage = null
-            )
+            val current = _uiState.value
+            _uiState.value = current.withCounts(isFetchingLocation = true)
 
             try {
                 val city = getCityFromCurrentLocation(appContext)
 
+                val after = _uiState.value
                 if (city != null) {
                     Log.d("PigeonHunterVM", "Location resolved to city: $city")
-                    _uiState.value = _uiState.value.copy(
-                        location = city,
-                        isFetchingLocation = false
-                    )
+                    _uiState.value = after.withCounts(location = city, isFetchingLocation = false)
                 } else {
                     Log.w("PigeonHunterVM", "Failed to resolve city from location")
-                    _uiState.value = _uiState.value.copy(
-                        isFetchingLocation = false,
-                        errorMessage = "Unable to determine city from location"
+                    _uiState.value = PigeonHunterUiState.Error(
+                        bitmap = when (after) {
+                            is PigeonHunterUiState.Success -> after.bitmap
+                            is PigeonHunterUiState.Analyzing -> after.bitmap
+                            is PigeonHunterUiState.PhotoCaptured -> after.bitmap
+                            is PigeonHunterUiState.Queued -> after.bitmap
+                            else -> null
+                        },
+                        message = "Unable to determine city from location",
+                        savedCount = after.savedCount,
+                        queuedCount = after.queuedCount,
+                        location = after.location,
+                        isFetchingLocation = false
                     )
                 }
             } catch (se: SecurityException) {
                 Log.e("PigeonHunterVM", "Location permission not granted", se)
-                _uiState.value = _uiState.value.copy(
-                    isFetchingLocation = false,
-                    errorMessage = "Location permission required. Please grant location access."
+                val after = _uiState.value
+                _uiState.value = PigeonHunterUiState.Error(
+                    bitmap = null,
+                    message = "Location permission required",
+                    savedCount = after.savedCount,
+                    queuedCount = after.queuedCount,
+                    location = after.location,
+                    isFetchingLocation = false
                 )
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Error fetching location", e)
-                _uiState.value = _uiState.value.copy(
-                    isFetchingLocation = false,
-                    errorMessage = "Failed to get location: ${e.message}"
+                val after = _uiState.value
+                _uiState.value = PigeonHunterUiState.Error(
+                    bitmap = null,
+                    message = "Failed to get location: ${e.message}",
+                    savedCount = after.savedCount,
+                    queuedCount = after.queuedCount,
+                    location = after.location,
+                    isFetchingLocation = false
                 )
             }
         }
@@ -331,21 +505,11 @@ class PigeonHunterViewModel @Inject constructor(
     @SuppressLint("MissingPermission")
     private suspend fun getCityFromCurrentLocation(context: Context): String? {
         val fusedClient = LocationServices.getFusedLocationProviderClient(context)
-
         var location = awaitLastLocation(fusedClient)
-        Log.d("PigeonHunterVM", "Last location: $location")
-
         if (location == null) {
-            Log.d("PigeonHunterVM", "Last location null, requesting current location...")
             location = awaitCurrentLocation(fusedClient)
-            Log.d("PigeonHunterVM", "Current location: $location")
         }
-
-        if (location == null) {
-            Log.w("PigeonHunterVM", "Could not obtain any location")
-            return null
-        }
-
+        if (location == null) return null
         return reverseGeocodeToCity(context, location.latitude, location.longitude)
     }
 
@@ -376,16 +540,11 @@ class PigeonHunterViewModel @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 val geocoder = Geocoder(context, Locale.getDefault())
-
                 val city = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     suspendCancellableCoroutine { cont ->
                         geocoder.getFromLocation(latitude, longitude, 1) { addresses ->
                             val result = addresses.firstOrNull()?.let { addr ->
-                                addr.locality
-                                    ?: addr.subAdminArea
-                                    ?: addr.adminArea
-                                    ?: addr.countryName
-                                    ?: "${addr.latitude},${addr.longitude}"
+                                addr.locality ?: addr.subAdminArea ?: addr.adminArea ?: addr.countryName
                             }
                             cont.resume(result) {}
                         }
@@ -394,81 +553,123 @@ class PigeonHunterViewModel @Inject constructor(
                     @Suppress("DEPRECATION")
                     val addresses = geocoder.getFromLocation(latitude, longitude, 1)
                     addresses?.firstOrNull()?.let { addr ->
-                        addr.locality
-                            ?: addr.subAdminArea
-                            ?: addr.adminArea
-                            ?: addr.countryName
-                            ?: "${addr.latitude},${addr.longitude}"
+                        addr.locality ?: addr.subAdminArea ?: addr.adminArea ?: addr.countryName
                     }
                 }
-
                 Log.d("PigeonHunterVM", "Geocoded $latitude,$longitude -> $city")
                 city
             } catch (e: Exception) {
-                Log.e("PigeonHunterVM", "Geocoding failed for $latitude,$longitude", e)
+                Log.e("PigeonHunterVM", "Geocoding failed", e)
                 null
             }
         }
     
     fun onSaveCurrent() {
-        val bitmap = _uiState.value.capturedBitmap
-        val result = _uiState.value.pigeonResult
-        val city = _uiState.value.location
+        val current = _uiState.value
+        val bitmap = when (current) {
+            is PigeonHunterUiState.Success -> current.bitmap
+            is PigeonHunterUiState.Queued -> current.bitmap
+            is PigeonHunterUiState.Analyzing -> current.bitmap
+            is PigeonHunterUiState.PhotoCaptured -> current.bitmap
+            is PigeonHunterUiState.Saving -> current.bitmap
+            is PigeonHunterUiState.SyncingQueue -> current.bitmap
+            is PigeonHunterUiState.Error -> current.bitmap
+            is PigeonHunterUiState.Initial -> null
+        }
+        val result = when (current) {
+            is PigeonHunterUiState.Success -> current.result
+            is PigeonHunterUiState.Saving -> current.result
+            is PigeonHunterUiState.SyncingQueue -> current.result
+            is PigeonHunterUiState.Queued -> current.result
+            else -> null
+        }
 
         if (bitmap == null) {
-            _uiState.value = _uiState.value.copy(saveMessage = "No photo to save")
+            _uiState.value = PigeonHunterUiState.Error(
+                bitmap = null,
+                message = "No photo to save",
+                savedCount = current.savedCount,
+                queuedCount = current.queuedCount,
+                location = current.location,
+                isFetchingLocation = false
+            )
             return
         }
 
-        if (_uiState.value.isSaving) return
+        if (current is PigeonHunterUiState.Saving) return
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSaving = true, saveMessage = null, errorMessage = null)
+            _uiState.value = PigeonHunterUiState.Saving(
+                bitmap = bitmap,
+                result = result ?: PigeonDetectionResult(false, null, 0f, null, null, "No analysis", ""),
+                savedCount = current.savedCount,
+                queuedCount = current.queuedCount,
+                location = current.location,
+                isFetchingLocation = false
+            )
             try {
-                when (val saveResult = savedRepository.savePigeon(bitmap, result, city)) {
+                when (val saveResult = savedRepository.savePigeon(bitmap, result, current.location)) {
                     is SavedPigeonRepository.SaveResult.Saved -> {
                         val newCount = savedRepository.getCount()
-                        _uiState.value = _uiState.value.copy(
-                            isSaving = false,
+                        _uiState.value = PigeonHunterUiState.Success(
+                            bitmap = bitmap,
+                            result = result ?: PigeonDetectionResult(false, null, 0f, null, null, "No analysis", ""),
                             savedCount = newCount,
+                            queuedCount = current.queuedCount,
+                            location = current.location,
+                            isFetchingLocation = false,
                             saveMessage = if (newCount >= 20) "Saved! Oldest deleted (max 20)" else "Saved! ($newCount/20)"
                         )
-                        Log.d("PigeonHunterVM", "Saved pigeon id=${saveResult.id}, count=$newCount")
+                        Log.d("PigeonHunterVM", "Saved id=${saveResult.id}, count=$newCount")
                     }
                     is SavedPigeonRepository.SaveResult.AlreadyExists -> {
                         val count = savedRepository.getCount()
-                        _uiState.value = _uiState.value.copy(
-                            isSaving = false,
+                        _uiState.value = PigeonHunterUiState.Success(
+                            bitmap = bitmap,
+                            result = result ?: PigeonDetectionResult(false, null, 0f, null, null, "No analysis", ""),
                             savedCount = count,
+                            queuedCount = current.queuedCount,
+                            location = current.location,
+                            isFetchingLocation = false,
                             saveMessage = "Already saved! (id=${saveResult.existingId})"
                         )
-                        Log.d("PigeonHunterVM", "Duplicate detected, existingId=${saveResult.existingId}")
                     }
                 }
             } catch (e: Exception) {
-                Log.e("PigeonHunterVM", "Failed to save pigeon", e)
-                _uiState.value = _uiState.value.copy(
-                    isSaving = false,
-                    errorMessage = "Failed to save: ${e.message}"
+                Log.e("PigeonHunterVM", "Failed to save", e)
+                _uiState.value = PigeonHunterUiState.Error(
+                    bitmap = bitmap,
+                    message = "Failed to save: ${e.message}",
+                    savedCount = current.savedCount,
+                    queuedCount = current.queuedCount,
+                    location = current.location,
+                    isFetchingLocation = false
                 )
             }
         }
     }
 
     fun clearSaveMessage() {
-        _uiState.value = _uiState.value.copy(saveMessage = null)
+        val current = _uiState.value
+        if (current is PigeonHunterUiState.Success) {
+            _uiState.value = current.copy(saveMessage = null)
+        }
     }
     
     fun clearError() {
-        _uiState.value = _uiState.value.copy(errorMessage = null)
+        val current = _uiState.value
+        _uiState.value = PigeonHunterUiState.Initial(
+            savedCount = current.savedCount,
+            queuedCount = current.queuedCount,
+            location = current.location,
+            isFetchingLocation = false
+        )
     }
 
     fun deleteSaved(id: Long) {
         viewModelScope.launch {
             try {
                 savedRepository.deleteById(id)
-                val count = savedRepository.getCount()
-                _uiState.value = _uiState.value.copy(savedCount = count, saveMessage = "Deleted")
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Failed to delete $id", e)
             }
