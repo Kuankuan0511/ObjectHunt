@@ -36,9 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +45,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.aai.steel.objecthunt.ui.SavedPigeonsScreen
 import com.aai.steel.objecthunt.ui.theme.ObjectHuntTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -119,27 +120,34 @@ class MainActivity : ComponentActivity() {
             ObjectHuntTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val uiState by viewModel.uiState.collectAsState()
-                    var showSavedScreen by remember { mutableStateOf(false) }
+                    val navController = rememberNavController()
 
-                    if (showSavedScreen) {
-                        SavedPigeonsScreen(
-                            viewModel = viewModel,
-                            onBack = { showSavedScreen = false },
-                            modifier = Modifier.padding(innerPadding)
-                        )
-                    } else {
-                        ObjectHuntScreen(
-                            modifier = Modifier.padding(innerPadding),
-                            uiState = uiState,
-                            onTakePhoto = {
-                                if (hasCameraPermission()) takePictureLauncher.launch(null)
-                                else requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                            },
-                            onRetakePhoto = { viewModel.onRetakePhoto() },
-                            onSave = { viewModel.onSaveCurrent() },
-                            onSyncQueue = { viewModel.syncQueuedDetections() },
-                            onViewSaved = { showSavedScreen = true }
-                        )
+                    NavHost(
+                        navController = navController,
+                        startDestination = "hunt",
+                        modifier = Modifier.padding(innerPadding)
+                    ) {
+                        composable("hunt") {
+                            ObjectHuntScreen(
+                                modifier = Modifier,
+                                uiState = uiState,
+                                onTakePhoto = {
+                                    if (hasCameraPermission()) takePictureLauncher.launch(null)
+                                    else requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                },
+                                onRetakePhoto = { viewModel.onRetakePhoto() },
+                                onSave = { viewModel.onSaveCurrent() },
+                                onSyncQueue = { viewModel.syncQueuedDetections() },
+                                onViewSaved = { navController.navigate("saved") }
+                            )
+                        }
+                        composable("saved") {
+                            SavedPigeonsScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                modifier = Modifier
+                            )
+                        }
                     }
                 }
             }
