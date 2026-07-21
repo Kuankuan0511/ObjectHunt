@@ -36,7 +36,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +47,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.aai.steel.objecthunt.ui.SavedPigeonsScreen
 import com.aai.steel.objecthunt.ui.theme.ObjectHuntTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -116,17 +119,28 @@ class MainActivity : ComponentActivity() {
             ObjectHuntTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val uiState by viewModel.uiState.collectAsState()
-                    ObjectHuntScreen(
-                        modifier = Modifier.padding(innerPadding),
-                        uiState = uiState,
-                        onTakePhoto = {
-                            if (hasCameraPermission()) takePictureLauncher.launch(null)
-                            else requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                        },
-                        onRetakePhoto = { viewModel.onRetakePhoto() },
-                        onSave = { viewModel.onSaveCurrent() },
-                        onSyncQueue = { viewModel.syncQueuedDetections() }
-                    )
+                    var showSavedScreen by remember { mutableStateOf(false) }
+
+                    if (showSavedScreen) {
+                        SavedPigeonsScreen(
+                            viewModel = viewModel,
+                            onBack = { showSavedScreen = false },
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    } else {
+                        ObjectHuntScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            uiState = uiState,
+                            onTakePhoto = {
+                                if (hasCameraPermission()) takePictureLauncher.launch(null)
+                                else requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            },
+                            onRetakePhoto = { viewModel.onRetakePhoto() },
+                            onSave = { viewModel.onSaveCurrent() },
+                            onSyncQueue = { viewModel.syncQueuedDetections() },
+                            onViewSaved = { showSavedScreen = true }
+                        )
+                    }
                 }
             }
         }
@@ -140,7 +154,8 @@ fun ObjectHuntScreen(
     onTakePhoto: () -> Unit,
     onRetakePhoto: () -> Unit,
     onSave: () -> Unit,
-    onSyncQueue: () -> Unit
+    onSyncQueue: () -> Unit,
+    onViewSaved: () -> Unit
 ) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -197,6 +212,10 @@ fun ObjectHuntScreen(
                         Text(text = "Saved: ${uiState.savedCount}/20 | Queued: ${uiState.queuedCount}", style = MaterialTheme.typography.bodySmall)
                         uiState.saveMessage?.let { Text(text = it, modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall) }
                         uiState.queueMessage?.let { Text(text = "📡 $it", modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall) }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(onClick = onViewSaved) {
+                            Text("📚 View Saved (${uiState.savedCount}/20)")
+                        }
                     }
                 }
             }
@@ -238,7 +257,7 @@ fun ObjectHuntScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue)
+                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue, onViewSaved)
                         }
                     }
                 } else {
@@ -248,7 +267,7 @@ fun ObjectHuntScreen(
                                 Image(bitmap = it, contentDescription = "Captured image", modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(8.dp)))
                             }
                             Spacer(modifier = Modifier.height(16.dp))
-                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue)
+                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue, onViewSaved)
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
@@ -275,6 +294,10 @@ fun ObjectHuntScreen(
                             Text("🔄 Sync ${uiState.queuedCount} queued (backoff)")
                         }
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(onClick = onViewSaved, modifier = Modifier.fillMaxWidth()) {
+                        Text("📚 View Saved (${uiState.savedCount}/20)")
+                    }
                 }
             }
         }
@@ -286,7 +309,8 @@ private fun ContentForState(
     uiState: PigeonHunterUiState,
     onSave: () -> Unit,
     onRetakePhoto: () -> Unit,
-    onSyncQueue: () -> Unit
+    onSyncQueue: () -> Unit,
+    onViewSaved: () -> Unit = {}
 ) {
     when (uiState) {
         is PigeonHunterUiState.Analyzing -> {
@@ -361,7 +385,7 @@ private fun ContentForState(
         is PigeonHunterUiState.Initial -> {}
     }
 
-    // For landscape, buttons are inside this column; for portrait, outer Row handles Save/Retake, so only show extra when needed
+    // For landscape, buttons are inside this column; portrait handled outside
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     if (isLandscape) {
         Spacer(modifier = Modifier.height(8.dp))
@@ -384,11 +408,23 @@ private fun ContentForState(
                         Text("🔄 Sync ${uiState.queuedCount} (backoff)")
                     }
                 }
+                OutlinedButton(onClick = onViewSaved, modifier = Modifier.fillMaxWidth()) {
+                    Text("📚 View Saved (${uiState.savedCount}/20)")
+                }
             }
             is PigeonHunterUiState.Error, is PigeonHunterUiState.Queued -> {
-                Button(onClick = onRetakePhoto, modifier = Modifier.fillMaxWidth()) { Text("Retake") }
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onRetakePhoto, modifier = Modifier.fillMaxWidth()) { Text("Retake") }
+                    OutlinedButton(onClick = onViewSaved, modifier = Modifier.fillMaxWidth()) {
+                        Text("📚 View Saved (${uiState.savedCount}/20)")
+                    }
+                }
             }
-            else -> {}
+            else -> {
+                OutlinedButton(onClick = onViewSaved, modifier = Modifier.fillMaxWidth()) {
+                    Text("📚 View Saved (${uiState.savedCount}/20)")
+                }
+            }
         }
     }
 }

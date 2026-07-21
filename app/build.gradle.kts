@@ -1,12 +1,5 @@
 import java.util.Properties
 
-// FIX: Hilt's hiltAggregateDepsDebug task runs on buildscript classpath
-buildscript {
-    dependencies {
-        classpath("com.squareup:javapoet:1.13.0")
-    }
-}
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -103,6 +96,9 @@ dependencies {
     // Hilt - dependency injection
     implementation(libs.hilt.android)
 
+    // Navigation - for saved list screen
+    implementation(libs.navigation.compose)
+
     testImplementation(libs.junit)
     testImplementation(libs.room.testing)
     testImplementation(libs.androidx.test.core)
@@ -118,4 +114,13 @@ dependencies {
     // KSP - Room + Hilt compilers
     ksp(libs.room.compiler)
     ksp(libs.hilt.compiler)
+    // Force javapoet to fix hiltAggregateDepsDebug NoSuchMethodError canonicalName()
+    ksp("com.squareup:javapoet:1.13.0")
+}
+
+// Fix javapoet version conflict: Room + Hilt both bring javapoet, Gradle picks older without canonicalName()
+configurations.configureEach {
+    resolutionStrategy {
+        force("com.squareup:javapoet:1.13.0")
+    }
 }
