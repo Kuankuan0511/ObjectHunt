@@ -92,12 +92,14 @@ class DetectionQueueRepository(
 
     fun getQueuedFlow(): Flow<List<QueuedDetectionEntity>> = queuedDao.getAllFlow()
 
-    suspend fun getQueuedCount(): Int = queuedDao.count()
+    suspend fun getQueuedCount(): Int = withContext(ioDispatcher) { queuedDao.count() }
 
-    suspend fun getAllQueued(): List<QueuedDetectionEntity> = queuedDao.getAll()
+    suspend fun getAllQueued(): List<QueuedDetectionEntity> = withContext(ioDispatcher) { queuedDao.getAll() }
 
-    // Exposed for ViewModel auto-retry calc and tests - allows getting DAO for advanced queries
+    // Exposed for ViewModel auto-retry calc and tests
     fun getQueuedDao(): QueuedDetectionDao = queuedDao
+
+    suspend fun deleteAll() = withContext(ioDispatcher) { queuedDao.deleteAll() }
 
     /**
      * Enqueue a detection request when network is down.

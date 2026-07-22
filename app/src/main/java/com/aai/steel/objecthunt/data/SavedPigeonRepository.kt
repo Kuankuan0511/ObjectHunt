@@ -25,13 +25,15 @@ class SavedPigeonRepository(
 
     fun getSavedPigeonsFlow(): Flow<List<PigeonEntity>> = dao.getAllFlow()
 
-    suspend fun getSavedPigeons(): List<PigeonEntity> = dao.getAll()
+    suspend fun getSavedPigeons(): List<PigeonEntity> = withContext(ioDispatcher) { dao.getAll() }
 
-    suspend fun getCount(): Int = dao.count()
+    suspend fun getCount(): Int = withContext(ioDispatcher) { dao.count() }
 
-    suspend fun deleteById(id: Long) = dao.deleteById(id)
+    suspend fun deleteById(id: Long) = withContext(ioDispatcher) { dao.deleteById(id) }
 
-    suspend fun deleteAll() = dao.deleteAll()
+    suspend fun deleteAll() = withContext(ioDispatcher) { dao.deleteAll() }
+
+    suspend fun getByHash(hash: String): PigeonEntity? = withContext(ioDispatcher) { dao.getByHash(hash) }
 
     sealed class SaveResult {
         data class Saved(val id: Long) : SaveResult()
