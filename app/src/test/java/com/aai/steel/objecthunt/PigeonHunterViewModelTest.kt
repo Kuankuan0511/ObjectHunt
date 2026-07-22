@@ -2,6 +2,7 @@ package com.aai.steel.objecthunt
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.aai.steel.objecthunt.data.DetectionQueueRepository
 import com.aai.steel.objecthunt.data.NetworkMonitor
@@ -16,6 +17,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -78,6 +80,10 @@ class PigeonHunterViewModelTest {
         db.close()
     }
 
+    private fun idleMainLooper() {
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
     @Test
     fun initialState_hasZeroCounts() = runTest {
         val state = viewModel.uiState.first()
@@ -92,6 +98,7 @@ class PigeonHunterViewModelTest {
     fun onPhotoCaptured_transitionsToAnalyzing() = runTest {
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
+        idleMainLooper()
 
         // Should be Analyzing immediately
         val analyzing = viewModel.uiState.first()
@@ -128,23 +135,33 @@ class PigeonHunterViewModelTest {
                 )
             )
         }
-        // Wait for Flow collector to update count
+        // Wait for Flow collectors (Main looper) to update count
+        idleMainLooper()
         advanceUntilIdle()
-        // Manually trigger count collection - need to wait
-        val initial = viewModel.uiState.first()
-        // After inserts, savedCount flow should have updated to 5
-        // But we need to advance and check - collect latest
-        var state = viewModel.uiState.first()
-        // Force re-read count via savedRepo
+        idleMainLooper()
+
         val count = savedRepo.getCount()
         assertEquals(5, count)
+
+        // Also wait for uiState flow to reflect count
+        idleMainLooper()
+        advanceUntilIdle()
+        idleMainLooper()
+        var state = viewModel.uiState.first()
+        // Flow collector should have updated savedCount to 5
+        // Note: may need a bit more idle due to Room flow being async
+        shadowOf(Looper.getMainLooper()).idle()
 
         // Now capture photo and retake - count should be preserved (was bug: reset to 0)
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
+        idleMainLooper()
         advanceUntilIdle()
+        idleMainLooper()
         viewModel.onRetakePhoto()
+        idleMainLooper()
         advanceUntilIdle()
+        idleMainLooper()
 
         val afterRetake = viewModel.uiState.first()
         assertTrue(afterRetake is PigeonHunterUiState.Initial)
@@ -155,13 +172,18 @@ class PigeonHunterViewModelTest {
     fun onSaveCurrent_savesAndUpdatesCount() = runTest {
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
-        advanceUntilIdle() // completes analysis -> Success
+        idleMainLooper()
+        advanceUntilIdle()
+        idleMainLooper() // completes analysis -> Success
 
         val successBefore = viewModel.uiState.first()
         assertTrue(successBefore is PigeonHunterUiState.Success)
 
         viewModel.onSaveCurrent()
+        idleMainLooper()
         advanceUntilIdle()
+        idleMainLooper()
+        idleMainLooper()
 
         val afterSave = viewModel.uiState.first()
         assertTrue(afterSave is PigeonHunterUiState.Success)
@@ -176,12 +198,17 @@ class PigeonHunterViewModelTest {
         advanceUntilIdle()
 
         viewModel.onSaveCurrent()
+        idleMainLooper()
         advanceUntilIdle()
+        idleMainLooper()
+        idleMainLooper()
         assertEquals(1, viewModel.uiState.first().savedCount)
 
         // Save same bitmap again without retake - should be detected as duplicate
         viewModel.onSaveCurrent()
+        idleMainLooper()
         advanceUntilIdle()
+        idleMainLooper()
 
         val afterSecondSave = viewModel.uiState.first()
         assertEquals(1, afterSecondSave.savedCount) // still 1
@@ -195,14 +222,18 @@ class PigeonHunterViewModelTest {
         viewModel.onPhotoCaptured(bitmap)
         advanceUntilIdle()
         viewModel.onSaveCurrent()
+        idleMainLooper()
         advanceUntilIdle()
+        idleMainLooper()
 
         var state = viewModel.uiState.first()
         assertTrue(state is PigeonHunterUiState.Success)
         assertNotNull((state as PigeonHunterUiState.Success).saveMessage)
 
         viewModel.clearSaveMessage()
+        idleMainLooper()
         advanceUntilIdle()
+        idleMainLooper()
 
         state = viewModel.uiState.first()
         assertTrue(state is PigeonHunterUiState.Success)
@@ -233,7 +264,10 @@ class PigeonHunterViewModelTest {
 
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         errorVm.onPhotoCaptured(bitmap)
+        shadowOf(Looper.getMainLooper()).idle()
         advanceUntilIdle()
+        shadowOf(Looper.getMainLooper()).idle()
+        idleMainLooper()
 
         val errState = errorVm.uiState.first()
         assertTrue(errState is PigeonHunterUiState.Error)
@@ -257,6 +291,7 @@ class PigeonHunterViewModelTest {
         // Since Initial location is null by default in this test env (no real Geocoder), we just check no crash
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
+        idleMainLooper()
         val analyzing = viewModel.uiState.first()
         assertTrue(analyzing is PigeonHunterUiState.Analyzing)
         assertEquals(initial.location, analyzing.location) // both null, but structure preserved
