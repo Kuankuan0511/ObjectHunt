@@ -87,17 +87,22 @@ class SavedPigeonRepositoryTest {
 
     @Test
     fun savePigeon_enforcesLimit20() = runTest {
-        // Save 20 different bitmaps
+        // Save 20 different bitmaps - use distinct opaque colors that survive JPEG 80%
+        // Previous bug: eraseColor(i) with i=1..20 are all transparent near-black (0x00000001)
+        // JPEG quantizes them to same bytes -> same SHA-256 hash -> duplicate detection -> count=1
         for (i in 1..20) {
             val bmp = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888).apply {
-                eraseColor(i) // different color = different hash
+                // Distinct RGB with full alpha, so JPEG bytes differ
+                eraseColor(android.graphics.Color.rgb((i * 13) % 256, (i * 29) % 256, (i * 47) % 256))
             }
             repository.savePigeon(bmp, createResult("Pigeon $i"), "City $i")
         }
         assertEquals(20, repository.getCount())
 
         // 21st should delete oldest
-        val bmp21 = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888).apply { eraseColor(21) }
+        val bmp21 = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(255, 0, 0))
+        }
         repository.savePigeon(bmp21, createResult("Pigeon 21"), "City 21")
 
         assertEquals(20, repository.getCount())
