@@ -2,31 +2,39 @@ package com.aai.steel.objecthunt
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.aai.steel.objecthunt.data.DetectionQueueRepository
 import com.aai.steel.objecthunt.data.NetworkMonitor
 import com.aai.steel.objecthunt.data.PigeonDatabase
 import com.aai.steel.objecthunt.data.SavedPigeonRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
  * Tests for PigeonHunterViewModel state machine + save + queue + location
- * This is where most recent bugs lived: onRetake wiping count, double fetch, Flow sync, queue logic
+ * FIX: Use StandardTestDispatcher for Main to make viewModelScope controllable.
+ * Previously viewModelScope used Dispatchers.Main and Robolectric's Looper.idle()
+ * drained everything at once, so Analyzing intermediate state could never be observed.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class PigeonHunterViewModelTest {
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val testDispatcher = StandardTestDispatcher()
 
     private lateinit var db: PigeonDatabase
     private lateinit var pigeonRepo: PigeonRepository
@@ -35,8 +43,10 @@ class PigeonHunterViewModelTest {
     private lateinit var networkMonitor: NetworkMonitor
     private lateinit var viewModel: PigeonHunterViewModel
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Before
     fun setUp() {
+        Dispatchers.setMain(testDispatcher)
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = PigeonDatabase.getInMemoryInstance(context)
 
@@ -75,17 +85,17 @@ class PigeonHunterViewModelTest {
         )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @After
     fun tearDown() {
         db.close()
+        Dispatchers.resetMain()
     }
 
-    private fun idleMainLooper() {
-        shadowOf(Looper.getMainLooper()).idle()
-    }
-
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun initialState_hasZeroCounts() = runTest {
+    fun initialState_hasZeroCounts() = runTest(testDispatcher) {
+        advanceUntilIdle() // let init collectors run
         val state = viewModel.uiState.first()
         assertTrue(state is PigeonHunterUiState.Initial)
         assertEquals(0, state.savedCount)
@@ -94,29 +104,29 @@ class PigeonHunterViewModelTest {
         assertFalse(state.isFetchingLocation)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun onPhotoCaptured_transitionsToAnalyzing() = runTest {
+    fun onPhotoCaptured_transitionsToAnalyzing() = runTest(testDispatcher) {
+        advanceUntilIdle() // init
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
-        idleMainLooper()
 
-        // Should be Analyzing immediately
+        // Analyzing is set synchronously, before analyzePhoto coroutine runs
         val analyzing = viewModel.uiState.first()
-        assertTrue(analyzing is PigeonHunterUiState.Analyzing)
+        assertTrue("Should be Analyzing immediately after capture", analyzing is PigeonHunterUiState.Analyzing)
         assertEquals(bitmap, (analyzing as PigeonHunterUiState.Analyzing).bitmap)
 
-        advanceUntilIdle()
+        advanceUntilIdle() // now run analyzePhoto to completion
 
-        // After analysis, should be Success
         val success = viewModel.uiState.first()
-        assertTrue(success is PigeonHunterUiState.Success)
+        assertTrue("Should be Success after analysis", success is PigeonHunterUiState.Success)
         assertTrue((success as PigeonHunterUiState.Success).result.hasPigeon)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun onRetakePhoto_preservesSavedCount_bugFix() = runTest {
-        // Simulate having saved 5 pigeons
-        val context = ApplicationProvider.getApplicationContext<Context>()
+    fun onRetakePhoto_preservesSavedCount_bugFix() = runTest(testDispatcher) {
+        advanceUntilIdle()
         val fakeImage = ByteArray(10)
         val dao = db.pigeonDao()
         for (i in 1..5) {
@@ -135,55 +145,34 @@ class PigeonHunterViewModelTest {
                 )
             )
         }
-        // Wait for Flow collectors (Main looper) to update count
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
-
         val count = savedRepo.getCount()
         assertEquals(5, count)
 
-        // Also wait for uiState flow to reflect count
-        idleMainLooper()
-        advanceUntilIdle()
-        idleMainLooper()
-        var state = viewModel.uiState.first()
-        // Flow collector should have updated savedCount to 5
-        // Note: may need a bit more idle due to Room flow being async
-        shadowOf(Looper.getMainLooper()).idle()
-
-        // Now capture photo and retake - count should be preserved (was bug: reset to 0)
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
         viewModel.onRetakePhoto()
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
 
         val afterRetake = viewModel.uiState.first()
         assertTrue(afterRetake is PigeonHunterUiState.Initial)
-        assertEquals(5, afterRetake.savedCount) // should preserve 5, not 0
+        assertEquals(5, afterRetake.savedCount)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun onSaveCurrent_savesAndUpdatesCount() = runTest {
+    fun onSaveCurrent_savesAndUpdatesCount() = runTest(testDispatcher) {
+        advanceUntilIdle()
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper() // completes analysis -> Success
 
         val successBefore = viewModel.uiState.first()
         assertTrue(successBefore is PigeonHunterUiState.Success)
 
         viewModel.onSaveCurrent()
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
-        idleMainLooper()
 
         val afterSave = viewModel.uiState.first()
         assertTrue(afterSave is PigeonHunterUiState.Success)
@@ -191,58 +180,52 @@ class PigeonHunterViewModelTest {
         assertTrue(afterSave.saveMessage?.contains("Saved!") == true)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun onSaveCurrent_duplicateDetection() = runTest {
+    fun onSaveCurrent_duplicateDetection() = runTest(testDispatcher) {
+        advanceUntilIdle()
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
         advanceUntilIdle()
 
         viewModel.onSaveCurrent()
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
-        idleMainLooper()
         assertEquals(1, viewModel.uiState.first().savedCount)
 
-        // Save same bitmap again without retake - should be detected as duplicate
         viewModel.onSaveCurrent()
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
 
         val afterSecondSave = viewModel.uiState.first()
-        assertEquals(1, afterSecondSave.savedCount) // still 1
+        assertEquals(1, afterSecondSave.savedCount)
         assertTrue(afterSecondSave is PigeonHunterUiState.Success)
         assertTrue((afterSecondSave as PigeonHunterUiState.Success).saveMessage?.contains("Already saved") == true)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun clearSaveMessage_clearsMessage() = runTest {
+    fun clearSaveMessage_clearsMessage() = runTest(testDispatcher) {
+        advanceUntilIdle()
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
         advanceUntilIdle()
         viewModel.onSaveCurrent()
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
 
         var state = viewModel.uiState.first()
         assertTrue(state is PigeonHunterUiState.Success)
         assertNotNull((state as PigeonHunterUiState.Success).saveMessage)
 
         viewModel.clearSaveMessage()
-        idleMainLooper()
         advanceUntilIdle()
-        idleMainLooper()
 
         state = viewModel.uiState.first()
         assertTrue(state is PigeonHunterUiState.Success)
         assertNull((state as PigeonHunterUiState.Success).saveMessage)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun errorState_hasMessage() = runTest {
-        // Create repo that always throws non-network error
+    fun errorState_hasMessage() = runTest(testDispatcher) {
         val errorApi = object : MuseApiService {
             override suspend fun createResponse(
                 authorization: String,
@@ -254,6 +237,7 @@ class PigeonHunterViewModelTest {
         }
         val errorRepo = PigeonRepository(errorApi, "key", "model")
         val context = ApplicationProvider.getApplicationContext<Context>()
+        // Need to set Main for the new ViewModel as well
         val errorVm = PigeonHunterViewModel(
             repository = errorRepo,
             savedRepository = savedRepo,
@@ -262,38 +246,28 @@ class PigeonHunterViewModelTest {
             appContext = context
         )
 
+        advanceUntilIdle()
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         errorVm.onPhotoCaptured(bitmap)
-        shadowOf(Looper.getMainLooper()).idle()
         advanceUntilIdle()
-        shadowOf(Looper.getMainLooper()).idle()
-        idleMainLooper()
 
         val errState = errorVm.uiState.first()
         assertTrue(errState is PigeonHunterUiState.Error)
         assertTrue((errState as PigeonHunterUiState.Error).message.contains("Something went wrong"))
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun location_preservedAcrossStates() = runTest {
-        // Simulate location fetched in Initial
-        // We can't easily mock Geocoder, but we can test that location from Initial is carried to Analyzing and Success
-        // For simplicity, we test withCounts preservation via direct state manipulation
+    fun location_preservedAcrossStates() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val initial = viewModel.uiState.first()
+        assertTrue(initial is PigeonHunterUiState.Initial)
 
-        val initial = viewModel.uiState.first() as PigeonHunterUiState.Initial
-        // Simulate having location from previous fetch
-        // Need to use reflection or just test that onPhotoCaptured preserves location from current state?
-        // In onPhotoCaptured we create Analyzing with location = current.location, so location preserved
-
-        // Manually set location via private _uiState? Can't access, so we test via fetch logic not included
-        // Instead, verify that after onPhotoCaptured, location from Initial is preserved in Analyzing
-
-        // Since Initial location is null by default in this test env (no real Geocoder), we just check no crash
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         viewModel.onPhotoCaptured(bitmap)
-        idleMainLooper()
+        // Analyzing set synchronously, should be immediate
         val analyzing = viewModel.uiState.first()
         assertTrue(analyzing is PigeonHunterUiState.Analyzing)
-        assertEquals(initial.location, analyzing.location) // both null, but structure preserved
+        assertEquals(initial.location, analyzing.location)
     }
 }
