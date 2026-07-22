@@ -29,7 +29,8 @@ import kotlin.random.Random
 class DetectionQueueRepository(
     private val queuedDao: QueuedDetectionDao,
     private val pigeonRepository: PigeonRepository,
-    private val savedRepository: SavedPigeonRepository
+    private val savedRepository: SavedPigeonRepository,
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
 ) {
     // Mutex to protect concurrent access to queue - prevents race conditions
     private val queueMutex = Mutex()
@@ -103,7 +104,7 @@ class DetectionQueueRepository(
      * Thread-safe via Mutex to prevent race conditions with concurrent enqueues.
      */
     suspend fun enqueue(bitmap: Bitmap, city: String?): Long = queueMutex.withLock {
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             val imageBytes = bitmapToBytes(bitmap)
             val entity = QueuedDetectionEntity(
                 timestamp = System.currentTimeMillis(),
@@ -125,7 +126,7 @@ class DetectionQueueRepository(
      * Thread-safe, handles concurrent calls.
      */
     suspend fun syncPending(context: Context): SyncResult = syncMutex.withLock {
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             if (!isNetworkAvailable(context)) {
                 Log.d("DetectionQueue", "No network, skipping sync")
                 return@withContext SyncResult.NoNetwork

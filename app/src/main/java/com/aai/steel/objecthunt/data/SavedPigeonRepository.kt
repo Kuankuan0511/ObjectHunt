@@ -15,9 +15,11 @@ import java.security.MessageDigest
  * Repository for saved pigeon hunts - handles conversion from UI state to Entity
  * and enforces max 20 limit via DAO.
  * Handles concurrency via Mutex to prevent race on count+delete+insert.
+ * ioDispatcher is injectable so tests can run work on TestDispatcher.
  */
 class SavedPigeonRepository(
-    private val dao: PigeonDao
+    private val dao: PigeonDao,
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
 ) {
     private val saveMutex = kotlinx.coroutines.sync.Mutex()
 
@@ -47,7 +49,7 @@ class SavedPigeonRepository(
         result: PigeonDetectionResult?,
         city: String?
     ): SaveResult = saveMutex.withLock {
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
             val imageBytes = bitmapToByteArray(bitmap)
             val hash = sha256(imageBytes)
 

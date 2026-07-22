@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import androidx.test.core.app.ApplicationProvider
 import com.aai.steel.objecthunt.data.PigeonDatabase
 import com.aai.steel.objecthunt.data.SavedPigeonRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
@@ -18,6 +20,8 @@ import org.robolectric.annotation.Config
 @Config(manifest = Config.NONE, sdk = [33])
 class SavedPigeonRepositoryTest {
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val testDispatcher = StandardTestDispatcher()
     private lateinit var db: PigeonDatabase
     private lateinit var repository: SavedPigeonRepository
 
@@ -25,7 +29,7 @@ class SavedPigeonRepositoryTest {
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = PigeonDatabase.getInMemoryInstance(context)
-        repository = SavedPigeonRepository(db.pigeonDao())
+        repository = SavedPigeonRepository(db.pigeonDao(), ioDispatcher = testDispatcher)
     }
 
     @After

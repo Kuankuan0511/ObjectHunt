@@ -7,7 +7,9 @@ import com.aai.steel.objecthunt.data.DetectionQueueRepository
 import com.aai.steel.objecthunt.data.PigeonDatabase
 import com.aai.steel.objecthunt.data.PigeonEntity
 import com.aai.steel.objecthunt.data.SavedPigeonRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
@@ -26,11 +28,15 @@ import org.robolectric.annotation.Config
 @Config(manifest = Config.NONE, sdk = [33])
 class DetectionQueueRepositoryTest {
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val testDispatcher = StandardTestDispatcher()
+
     private lateinit var db: PigeonDatabase
     private lateinit var pigeonRepo: PigeonRepository
     private lateinit var savedRepo: SavedPigeonRepository
     private lateinit var queueRepo: DetectionQueueRepository
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -63,8 +69,8 @@ class DetectionQueueRepositoryTest {
         }
         pigeonRepo = PigeonRepository(fakeApiService, "fake_key", "test-model")
 
-        savedRepo = SavedPigeonRepository(db.pigeonDao())
-        queueRepo = DetectionQueueRepository(db.queuedDetectionDao(), pigeonRepo, savedRepo)
+        savedRepo = SavedPigeonRepository(db.pigeonDao(), ioDispatcher = testDispatcher)
+        queueRepo = DetectionQueueRepository(db.queuedDetectionDao(), pigeonRepo, savedRepo, ioDispatcher = testDispatcher)
     }
 
     @After
