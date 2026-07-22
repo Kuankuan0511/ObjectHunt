@@ -12,11 +12,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * Monitors network connectivity and emits true when internet is available.
- * Used to trigger queue sync when connectivity restored.
+ * Open for testing to avoid Robolectric registerNetworkCallback leaving unexecuted looper tasks.
  */
-class NetworkMonitor(private val context: Context) {
+open class NetworkMonitor(private val context: Context) {
 
-    fun isCurrentlyAvailable(): Boolean {
+    open fun isCurrentlyAvailable(): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return false
         return try {
@@ -42,9 +42,9 @@ class NetworkMonitor(private val context: Context) {
 
     /**
      * Flow that emits network availability changes.
-     * Handles concurrency: distinctUntilChanged prevents duplicate triggers.
+     * Open for testing - fake can return flowOf without registering callback.
      */
-    fun observe(): Flow<Boolean> = callbackFlow {
+    open fun observe(): Flow<Boolean> = callbackFlow {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         if (cm == null) {
             trySend(false)
