@@ -50,8 +50,8 @@ class SavedPigeonRepository(
         bitmap: Bitmap,
         result: PigeonDetectionResult?,
         city: String?
-    ): SaveResult = saveMutex.withLock {
-        withContext(ioDispatcher) {
+    ): SaveResult = withContext(ioDispatcher) {
+        saveMutex.withLock {
             val imageBytes = bitmapToByteArray(bitmap)
             val hash = sha256(imageBytes)
 
@@ -59,7 +59,7 @@ class SavedPigeonRepository(
             val existing = dao.getByHash(hash)
             if (existing != null) {
                 Log.d("SavedPigeonRepo", "Duplicate image detected, hash=$hash, existingId=${existing.id}")
-                return@withContext SaveResult.AlreadyExists(existing.id)
+                return@withLock SaveResult.AlreadyExists(existing.id)
             }
 
             val entity = PigeonEntity(

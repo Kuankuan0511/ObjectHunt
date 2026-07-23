@@ -103,10 +103,10 @@ class DetectionQueueRepository(
 
     /**
      * Enqueue a detection request when network is down.
-     * Thread-safe via Mutex to prevent race conditions with concurrent enqueues.
+     * Thread-safe via Mutex + IO dispatcher, withContext outer to avoid holding mutex across switch (deadlock in tests with testDispatcher)
      */
-    suspend fun enqueue(bitmap: Bitmap, city: String?): Long = queueMutex.withLock {
-        withContext(ioDispatcher) {
+    suspend fun enqueue(bitmap: Bitmap, city: String?): Long = withContext(ioDispatcher) {
+        queueMutex.withLock {
             val imageBytes = bitmapToBytes(bitmap)
             val entity = QueuedDetectionEntity(
                 timestamp = System.currentTimeMillis(),
@@ -124,20 +124,19 @@ class DetectionQueueRepository(
 
     /**
      * Sync pending detections - retry with exponential backoff.
-     * Single-flight via syncMutex: only one sync runs at a time.
-     * Thread-safe, handles concurrent calls.
+     * Single-flight via syncMutex + IO dispatcher, withContext outer to avoid deadlock in tests
      */
-    suspend fun syncPending(context: Context): SyncResult = syncMutex.withLock {
-        withContext(ioDispatcher) {
+    suspend fun syncPending(context: Context): SyncResult = withContext(ioDispatcher) {
+        syncMutex.withLock {
             if (!isNetworkAvailable(context)) {
                 Log.d("DetectionQueue", "No network, skipping sync")
-                return@withContext SyncResult.NoNetwork
+                return@withLock SyncResult.NoNetwork
             }
 
             val ready = queuedDao.getReadyToRetry()
             if (ready.isEmpty()) {
                 Log.d("DetectionQueue", "No queued detections ready")
-                return@withContext SyncResult.NothingToSync
+                return@withLock SyncResult.NothingToSync
             }
 
             Log.d("DetectionQueue", "Syncing ${ready.size} queued detections")
