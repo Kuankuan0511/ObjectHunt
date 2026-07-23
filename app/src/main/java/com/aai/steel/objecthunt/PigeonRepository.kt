@@ -129,14 +129,20 @@ class PigeonRepository(
                     val delayMs = 1000L * (attempt + 1) // Exponential backoff: 1s, 2s, 3s
                     Log.w("PigeonRepository", "Attempt ${attempt + 1} failed: ${e.message}. Retrying in ${delayMs}ms...")
                     kotlinx.coroutines.delay(delayMs)
+                    // Continue to next retry attempt
                 } else {
-                    Log.e("PigeonRepository", "All $maxRetries attempts failed", e)
-                    // Don't break, just let loop finish and return error below
+                    // Non-retryable (401, 403, 429 etc.) or last retryable attempt - stop retrying
+                    if (!isRetryable) {
+                        Log.e("PigeonRepository", "Non-retryable error on attempt ${attempt + 1}, not retrying", e)
+                    } else {
+                        Log.e("PigeonRepository", "All $maxRetries attempts failed", e)
+                    }
+                    break
                 }
             }
         }
         
-        // All retries exhausted, delegate to dedicated parser for user-friendly error
+        // Return user-friendly error after retries exhausted or non-retryable
         return PigeonResponseParser.createErrorResultFromException(lastException)
     }
     
