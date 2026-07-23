@@ -138,7 +138,9 @@ class MainActivity : ComponentActivity() {
                                 onRetakePhoto = { viewModel.onRetakePhoto() },
                                 onSave = { viewModel.onSaveCurrent() },
                                 onSyncQueue = { viewModel.syncQueuedDetections() },
-                                onViewSaved = { navController.navigate("saved") }
+                                onViewSaved = { navController.navigate("saved") },
+                                onUpdateQuery = { viewModel.updateUserQuery(it) },
+                                onAskCustom = { viewModel.onAskCustom() }
                             )
                         }
                         composable("saved") {
@@ -163,7 +165,9 @@ fun ObjectHuntScreen(
     onRetakePhoto: () -> Unit,
     onSave: () -> Unit,
     onSyncQueue: () -> Unit,
-    onViewSaved: () -> Unit
+    onViewSaved: () -> Unit,
+    onUpdateQuery: (String) -> Unit,
+    onAskCustom: () -> Unit
 ) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -265,24 +269,24 @@ fun ObjectHuntScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue, onViewSaved)
+                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue, onViewSaved, onUpdateQuery, onAskCustom)
                         }
                     }
                 } else {
                     Card(modifier = Modifier.fillMaxWidth().weight(1f), elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
-                        Column(modifier = Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                             imageBitmap?.let {
                                 Image(bitmap = it, contentDescription = "Captured image", modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(8.dp)))
                             }
                             Spacer(modifier = Modifier.height(16.dp))
-                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue, onViewSaved)
+                            ContentForState(uiState, onSave, onRetakePhoto, onSyncQueue, onViewSaved, onUpdateQuery, onAskCustom)
                         }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = onSave,
-                            enabled = uiState is PigeonHunterUiState.Success && !uiState.isSaving,
+                            enabled = (uiState as? PigeonHunterUiState.Success)?.let { !it.isSaving && it.result.hasPigeon } == true,
                             modifier = Modifier.weight(1f)
                         ) {
                             val isSaving = (uiState as? PigeonHunterUiState.Success)?.isSaving == true || uiState is PigeonHunterUiState.Saving
@@ -291,7 +295,8 @@ fun ObjectHuntScreen(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Saving...")
                             } else {
-                                Text("💾 Save (${uiState.savedCount}/20)")
+                                val hasPigeon = (uiState as? PigeonHunterUiState.Success)?.result?.hasPigeon == true
+                                Text(if (hasPigeon) "💾 Save (${uiState.savedCount}/20)" else "Can't save - no pigeon")
                             }
                         }
                         Button(onClick = onRetakePhoto, modifier = Modifier.weight(1f)) { Text("Retake") }
@@ -318,7 +323,9 @@ private fun ContentForState(
     onSave: () -> Unit,
     onRetakePhoto: () -> Unit,
     onSyncQueue: () -> Unit,
-    onViewSaved: () -> Unit = {}
+    onViewSaved: () -> Unit = {},
+    onUpdateQuery: (String) -> Unit = {},
+    onAskCustom: () -> Unit = {}
 ) {
     when (uiState) {
         is PigeonHunterUiState.Analyzing -> {
@@ -393,6 +400,42 @@ private fun ContentForState(
         is PigeonHunterUiState.Initial -> {}
     }
 
+    // Show custom query for any state with bitmap (except Initial) - user can ask "does this picture contain..."
+    if (uiState !is PigeonHunterUiState.Initial) {
+        Spacer(modifier = Modifier.height(12.dp))
+        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = "Ask about this picture:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                androidx.compose.material3.OutlinedTextField(
+                    value = uiState.userQuery,
+                    onValueChange = onUpdateQuery,
+                    label = { Text("does this picture contain...?") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = false,
+                    maxLines = 3
+                )
+                Button(
+                    onClick = onAskCustom,
+                    enabled = !uiState.isAskingCustom && uiState.userQuery.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (uiState.isAskingCustom) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Asking...")
+                    } else {
+                        Text("❓ Ask")
+                    }
+                }
+                uiState.customAnswer?.let { ans ->
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+                        Text(text = ans, modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+
     // For landscape, buttons are inside this column; portrait handled outside
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     if (isLandscape) {
@@ -400,13 +443,17 @@ private fun ContentForState(
         when (uiState) {
             is PigeonHunterUiState.Success -> {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onSave, enabled = !uiState.isSaving, modifier = Modifier.weight(1f)) {
+                    Button(
+                        onClick = onSave,
+                        enabled = !uiState.isSaving && uiState.result.hasPigeon,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         if (uiState.isSaving) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Saving...")
                         } else {
-                            Text("💾 Save (${uiState.savedCount}/20)")
+                            Text(if (uiState.result.hasPigeon) "💾 Save (${uiState.savedCount}/20)" else "Can't save - no pigeon")
                         }
                     }
                     Button(onClick = onRetakePhoto, modifier = Modifier.weight(1f)) { Text("Retake") }

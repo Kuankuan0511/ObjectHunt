@@ -39,6 +39,9 @@ sealed interface PigeonHunterUiState {
     val queueMessage: String?
     val isSaving: Boolean
     val isSyncingQueue: Boolean
+    val userQuery: String
+    val customAnswer: String?
+    val isAskingCustom: Boolean
 
     data class Initial(
         override val savedCount: Int = 0,
@@ -48,7 +51,10 @@ sealed interface PigeonHunterUiState {
         override val saveMessage: String? = null,
         override val queueMessage: String? = null,
         override val isSaving: Boolean = false,
-        override val isSyncingQueue: Boolean = false
+        override val isSyncingQueue: Boolean = false,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 
     data class PhotoCaptured(
@@ -60,7 +66,10 @@ sealed interface PigeonHunterUiState {
         override val saveMessage: String? = null,
         override val queueMessage: String? = null,
         override val isSaving: Boolean = false,
-        override val isSyncingQueue: Boolean = false
+        override val isSyncingQueue: Boolean = false,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 
     data class Analyzing(
@@ -72,7 +81,10 @@ sealed interface PigeonHunterUiState {
         override val saveMessage: String? = null,
         override val queueMessage: String? = null,
         override val isSaving: Boolean = false,
-        override val isSyncingQueue: Boolean = false
+        override val isSyncingQueue: Boolean = false,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 
     data class Success(
@@ -85,7 +97,10 @@ sealed interface PigeonHunterUiState {
         override val isSaving: Boolean = false,
         override val saveMessage: String? = null,
         override val queueMessage: String? = null,
-        override val isSyncingQueue: Boolean = false
+        override val isSyncingQueue: Boolean = false,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 
     data class Queued(
@@ -98,7 +113,10 @@ sealed interface PigeonHunterUiState {
         val result: PigeonDetectionResult? = null,
         override val saveMessage: String? = null,
         override val isSaving: Boolean = false,
-        override val isSyncingQueue: Boolean = false
+        override val isSyncingQueue: Boolean = false,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 
     data class Error(
@@ -111,7 +129,10 @@ sealed interface PigeonHunterUiState {
         override val saveMessage: String? = null,
         override val queueMessage: String? = null,
         override val isSaving: Boolean = false,
-        override val isSyncingQueue: Boolean = false
+        override val isSyncingQueue: Boolean = false,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 
     data class Saving(
@@ -124,7 +145,10 @@ sealed interface PigeonHunterUiState {
         override val saveMessage: String? = null,
         override val queueMessage: String? = null,
         override val isSaving: Boolean = true,
-        override val isSyncingQueue: Boolean = false
+        override val isSyncingQueue: Boolean = false,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 
     data class SyncingQueue(
@@ -137,7 +161,10 @@ sealed interface PigeonHunterUiState {
         override val saveMessage: String? = null,
         override val queueMessage: String? = null,
         override val isSaving: Boolean = false,
-        override val isSyncingQueue: Boolean = true
+        override val isSyncingQueue: Boolean = true,
+        override val userQuery: String = "",
+        override val customAnswer: String? = null,
+        override val isAskingCustom: Boolean = false
     ) : PigeonHunterUiState
 }
 
@@ -617,8 +644,27 @@ class PigeonHunterViewModel @Inject constructor(
                 savedCount = current.savedCount,
                 queuedCount = current.queuedCount,
                 location = current.location,
-                isFetchingLocation = false
+                isFetchingLocation = false,
+                userQuery = current.userQuery
             )
+            return
+        }
+
+        // Requirement: only save pictures that contain pigeon
+        if (result == null || !result.hasPigeon) {
+            _uiState.value = when (current) {
+                is PigeonHunterUiState.Success -> current.copy(saveMessage = "Can't save - no pigeon detected 🐦❌")
+                is PigeonHunterUiState.Error -> current.copy(saveMessage = "Can't save - no pigeon")
+                else -> PigeonHunterUiState.Error(
+                    bitmap = bitmap,
+                    message = "Can't save - no pigeon detected in this photo",
+                    savedCount = current.savedCount,
+                    queuedCount = current.queuedCount,
+                    location = current.location,
+                    isFetchingLocation = false,
+                    userQuery = current.userQuery
+                )
+            }
             return
         }
 
@@ -627,11 +673,13 @@ class PigeonHunterViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = PigeonHunterUiState.Saving(
                 bitmap = bitmap,
-                result = result ?: PigeonDetectionResult(false, null, 0f, null, null, "No analysis", ""),
+                result = result,
                 savedCount = current.savedCount,
                 queuedCount = current.queuedCount,
                 location = current.location,
-                isFetchingLocation = false
+                isFetchingLocation = false,
+                userQuery = current.userQuery,
+                customAnswer = current.customAnswer
             )
             try {
                 when (val saveResult = savedRepository.savePigeon(bitmap, result, current.location)) {
@@ -639,12 +687,14 @@ class PigeonHunterViewModel @Inject constructor(
                         val newCount = savedRepository.getCount()
                         _uiState.value = PigeonHunterUiState.Success(
                             bitmap = bitmap,
-                            result = result ?: PigeonDetectionResult(false, null, 0f, null, null, "No analysis", ""),
+                            result = result,
                             savedCount = newCount,
                             queuedCount = current.queuedCount,
                             location = current.location,
                             isFetchingLocation = false,
-                            saveMessage = if (newCount >= 20) "Saved! Oldest deleted (max 20)" else "Saved! ($newCount/20)"
+                            saveMessage = if (newCount >= 20) "Saved! Oldest deleted (max 20)" else "Saved! ($newCount/20)",
+                            userQuery = current.userQuery,
+                            customAnswer = current.customAnswer
                         )
                         Log.d("PigeonHunterVM", "Saved id=${saveResult.id}, count=$newCount")
                     }
@@ -652,12 +702,14 @@ class PigeonHunterViewModel @Inject constructor(
                         val count = savedRepository.getCount()
                         _uiState.value = PigeonHunterUiState.Success(
                             bitmap = bitmap,
-                            result = result ?: PigeonDetectionResult(false, null, 0f, null, null, "No analysis", ""),
+                            result = result,
                             savedCount = count,
                             queuedCount = current.queuedCount,
                             location = current.location,
                             isFetchingLocation = false,
-                            saveMessage = "Already saved! (id=${saveResult.existingId})"
+                            saveMessage = "Already saved! (id=${saveResult.existingId})",
+                            userQuery = current.userQuery,
+                            customAnswer = current.customAnswer
                         )
                     }
                 }
@@ -669,8 +721,114 @@ class PigeonHunterViewModel @Inject constructor(
                     savedCount = current.savedCount,
                     queuedCount = current.queuedCount,
                     location = current.location,
-                    isFetchingLocation = false
+                    isFetchingLocation = false,
+                    userQuery = current.userQuery
                 )
+            }
+        }
+    }
+
+    fun updateUserQuery(query: String) {
+        val current = _uiState.value
+        _uiState.value = when (current) {
+            is PigeonHunterUiState.Initial -> current.copy(userQuery = query)
+            is PigeonHunterUiState.PhotoCaptured -> current.copy(userQuery = query)
+            is PigeonHunterUiState.Analyzing -> current.copy(userQuery = query)
+            is PigeonHunterUiState.Success -> current.copy(userQuery = query)
+            is PigeonHunterUiState.Queued -> current.copy(userQuery = query)
+            is PigeonHunterUiState.Error -> current.copy(userQuery = query)
+            is PigeonHunterUiState.Saving -> current.copy(userQuery = query)
+            is PigeonHunterUiState.SyncingQueue -> current.copy(userQuery = query)
+        }
+    }
+
+    fun onAskCustom() {
+        val current = _uiState.value
+        val bitmap = when (current) {
+            is PigeonHunterUiState.Success -> current.bitmap
+            is PigeonHunterUiState.Queued -> current.bitmap
+            is PigeonHunterUiState.PhotoCaptured -> current.bitmap
+            is PigeonHunterUiState.Analyzing -> current.bitmap
+            is PigeonHunterUiState.Saving -> current.bitmap
+            is PigeonHunterUiState.SyncingQueue -> current.bitmap
+            is PigeonHunterUiState.Error -> current.bitmap
+            is PigeonHunterUiState.Initial -> null
+        }
+        val query = current.userQuery
+        if (bitmap == null) {
+            _uiState.value = PigeonHunterUiState.Error(
+                bitmap = null,
+                message = "Take a photo first to ask",
+                savedCount = current.savedCount,
+                queuedCount = current.queuedCount,
+                location = current.location,
+                isFetchingLocation = false,
+                userQuery = query
+            )
+            return
+        }
+        if (query.isBlank()) {
+            _uiState.value = when (current) {
+                is PigeonHunterUiState.Success -> current.copy(saveMessage = "Type a question like 'does this picture contain cat?'")
+                is PigeonHunterUiState.Error -> current.copy(saveMessage = "Type a question")
+                else -> current
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            // Set asking state
+            _uiState.value = when (val c = _uiState.value) {
+                is PigeonHunterUiState.Success -> c.copy(isAskingCustom = true, customAnswer = null)
+                is PigeonHunterUiState.Error -> PigeonHunterUiState.Success(
+                    bitmap = c.bitmap ?: bitmap,
+                    result = PigeonDetectionResult(false, null, 0f, null, null, "", ""),
+                    savedCount = c.savedCount,
+                    queuedCount = c.queuedCount,
+                    location = c.location,
+                    isFetchingLocation = false,
+                    userQuery = query,
+                    isAskingCustom = true
+                )
+                else -> {
+                    // Keep current but set asking
+                    val base = _uiState.value
+                    base
+                }
+            }
+            // Actually set isAskingCustom via withCounts extension for generic
+            val beforeAsk = _uiState.value
+            _uiState.value = when (beforeAsk) {
+                is PigeonHunterUiState.Success -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+                is PigeonHunterUiState.Initial -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+                is PigeonHunterUiState.PhotoCaptured -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+                is PigeonHunterUiState.Analyzing -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+                is PigeonHunterUiState.Queued -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+                is PigeonHunterUiState.Error -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+                is PigeonHunterUiState.Saving -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+                is PigeonHunterUiState.SyncingQueue -> beforeAsk.copy(isAskingCustom = true, customAnswer = null, userQuery = query)
+            }
+
+            try {
+                val answer = repository.askCustom(bitmap, query)
+                val after = _uiState.value
+                _uiState.value = when (after) {
+                    is PigeonHunterUiState.Success -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                    is PigeonHunterUiState.Initial -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                    is PigeonHunterUiState.PhotoCaptured -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                    is PigeonHunterUiState.Analyzing -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                    is PigeonHunterUiState.Queued -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                    is PigeonHunterUiState.Error -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                    is PigeonHunterUiState.Saving -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                    is PigeonHunterUiState.SyncingQueue -> after.copy(isAskingCustom = false, customAnswer = answer, userQuery = query)
+                }
+            } catch (e: Exception) {
+                val after = _uiState.value
+                val errMsg = "Failed to ask: ${e.message}"
+                _uiState.value = when (after) {
+                    is PigeonHunterUiState.Success -> after.copy(isAskingCustom = false, customAnswer = errMsg, userQuery = query)
+                    else -> after
+                }
             }
         }
     }
@@ -688,7 +846,8 @@ class PigeonHunterViewModel @Inject constructor(
             savedCount = current.savedCount,
             queuedCount = current.queuedCount,
             location = current.location,
-            isFetchingLocation = false
+            isFetchingLocation = false,
+            userQuery = current.userQuery
         )
     }
 

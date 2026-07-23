@@ -147,6 +147,58 @@ class PigeonRepository(
     }
     
     /**
+     * Ask custom question about image (e.g. "does this picture contain cat?")
+     * Returns free-form answer string
+     */
+    suspend fun askCustom(
+        bitmap: Bitmap,
+        question: String,
+        maxRetries: Int = 3
+    ): String {
+        var lastException: Exception? = null
+        for (attempt in 0 until maxRetries) {
+            try {
+                return performCustomAsk(bitmap, question)
+            } catch (e: Exception) {
+                lastException = e
+                if (isRetryableError(e) && attempt < maxRetries - 1) {
+                    kotlinx.coroutines.delay(1000L * (attempt + 1))
+                } else {
+                    break
+                }
+            }
+        }
+        return "Failed to answer: ${lastException?.message ?: "Unknown error"}"
+    }
+
+    private suspend fun performCustomAsk(bitmap: Bitmap, question: String): String {
+        val base64Image = bitmapToBase64(bitmap)
+        val request = MuseApiRequest(
+            model = model,
+            input = listOf(
+                InputMessage(
+                    content = listOf(
+                        ContentPart.TextPart(text = question),
+                        ContentPart.ImagePart(imageUrl = "data:image/jpeg;base64,$base64Image")
+                    )
+                )
+            )
+        )
+        val response = apiService.createResponse(
+            authorization = "Bearer $apiKey",
+            request = request
+        )
+        response.error?.let { return "API Error: ${it.message}" }
+        val description = response.output
+            ?.filter { it.type == "message" }
+            ?.flatMap { it.content ?: emptyList() }
+            ?.filter { it.type == "output_text" }
+            ?.mapNotNull { it.text }
+            ?.joinToString("") ?: ""
+        return if (description.isEmpty()) "No answer returned" else description
+    }
+
+    /**
      * Perform the actual detection (single attempt)
      */
     private suspend fun performDetection(bitmap: Bitmap): PigeonDetectionResult {
