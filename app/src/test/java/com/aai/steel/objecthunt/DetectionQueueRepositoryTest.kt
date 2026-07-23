@@ -29,7 +29,9 @@ import org.robolectric.annotation.Config
 class DetectionQueueRepositoryTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val testDispatcher = StandardTestDispatcher()
+    private val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val testDispatcher = StandardTestDispatcher(scheduler)
 
     private lateinit var db: PigeonDatabase
     private lateinit var pigeonRepo: PigeonRepository
@@ -100,16 +102,18 @@ class DetectionQueueRepositoryTest {
         assertTrue(d10 >= 30000L - 500) // with jitter but capped
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun enqueue_addsToQueue() = runTest {
+    fun enqueue_addsToQueue() = runTest(testDispatcher) {
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         val id = queueRepo.enqueue(bitmap, "SF")
         assertTrue(id > 0)
         assertEquals(1, queueRepo.getQueuedCount())
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun enqueue_concurrentRaceCondition_threadSafe() = runTest {
+    fun enqueue_concurrentRaceCondition_threadSafe() = runTest(testDispatcher) {
         // Simulate 10 concurrent enqueues - should all succeed without race, no lost writes
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
 
@@ -125,12 +129,10 @@ class DetectionQueueRepositoryTest {
         assertEquals(10, queueRepo.getQueuedCount())
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun syncPending_noNetwork_returnsNoNetwork() = runTest {
+    fun syncPending_noNetwork_returnsNoNetwork() = runTest(testDispatcher) {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        // This test environment likely has no validated internet in Robolectric, or has
-        // We can't guarantee network state, so just check that method doesn't crash
-        // and returns a valid SyncResult type
         val result = queueRepo.syncPending(context)
         assertTrue(
             result is DetectionQueueRepository.SyncResult.NoNetwork ||
@@ -139,9 +141,9 @@ class DetectionQueueRepositoryTest {
         )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun syncPending_concurrentSync_singleFlight() = runTest {
-        // Two concurrent syncs - only one should run at a time due to syncMutex
+    fun syncPending_concurrentSync_singleFlight() = runTest(testDispatcher) {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         queueRepo.enqueue(bitmap, "SF")
@@ -153,9 +155,7 @@ class DetectionQueueRepositoryTest {
         val r1 = job1.await()
         val r2 = job2.await()
 
-        // Both should complete without deadlock or race
         assertNotNull(r1)
         assertNotNull(r2)
-        // After sync, queue may still have items if no network, but no crash
     }
 }

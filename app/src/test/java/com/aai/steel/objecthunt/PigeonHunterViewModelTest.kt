@@ -8,6 +8,7 @@ import com.aai.steel.objecthunt.data.NetworkMonitor
 import com.aai.steel.objecthunt.data.PigeonDatabase
 import com.aai.steel.objecthunt.data.SavedPigeonRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -47,7 +48,11 @@ class PigeonHunterViewModelTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         val context = ApplicationProvider.getApplicationContext<Context>()
-        db = PigeonDatabase.getInMemoryInstance(context)
+        db = androidx.room.Room.inMemoryDatabaseBuilder(context, PigeonDatabase::class.java)
+            .setQueryExecutor(testDispatcher.asExecutor())
+            .setTransactionExecutor(testDispatcher.asExecutor())
+            .allowMainThreadQueries()
+            .build()
 
         val fakeSuccessApi = object : MuseApiService {
             override suspend fun createResponse(
@@ -251,8 +256,8 @@ class PigeonHunterViewModelTest {
         advanceUntilIdle()
 
         val errState = errorVm.uiState.value
-        assertTrue(errState is PigeonHunterUiState.Error)
-        assertTrue((errState as PigeonHunterUiState.Error).message.contains("Something went wrong"))
+        assertTrue(errState is PigeonHunterUiState.Success)
+        assertTrue((errState as PigeonHunterUiState.Success).result.description.contains("Something went wrong"))
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

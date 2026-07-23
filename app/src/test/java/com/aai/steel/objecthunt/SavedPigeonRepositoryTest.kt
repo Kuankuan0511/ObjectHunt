@@ -7,6 +7,7 @@ import com.aai.steel.objecthunt.data.PigeonDatabase
 import com.aai.steel.objecthunt.data.SavedPigeonRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
@@ -21,7 +22,9 @@ import org.robolectric.annotation.Config
 class SavedPigeonRepositoryTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val testDispatcher = StandardTestDispatcher()
+    private val scheduler = TestCoroutineScheduler()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val testDispatcher = StandardTestDispatcher(scheduler)
     private lateinit var db: PigeonDatabase
     private lateinit var repository: SavedPigeonRepository
 
@@ -54,8 +57,9 @@ class SavedPigeonRepositoryTest {
         )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun savePigeon_savesSuccessfully() = runTest {
+    fun savePigeon_savesSuccessfully() = runTest(testDispatcher) {
         val bitmap = createBitmap()
         val result = repository.savePigeon(bitmap, createResult(), "San Francisco")
 
@@ -63,8 +67,9 @@ class SavedPigeonRepositoryTest {
         assertEquals(1, repository.getCount())
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun savePigeon_detectsDuplicate() = runTest {
+    fun savePigeon_detectsDuplicate() = runTest(testDispatcher) {
         val bitmap = createBitmap()
         val result1 = createResult()
 
@@ -78,8 +83,9 @@ class SavedPigeonRepositoryTest {
         assertEquals(1, repository.getCount()) // still 1, not 2
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun savePigeon_differentBitmaps_notDuplicate() = runTest {
+    fun savePigeon_differentBitmaps_notDuplicate() = runTest(testDispatcher) {
         val bitmap1 = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
         val bitmap2 = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.BLUE) }
 
@@ -89,8 +95,9 @@ class SavedPigeonRepositoryTest {
         assertEquals(2, repository.getCount())
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun savePigeon_enforcesLimit20() = runTest {
+    fun savePigeon_enforcesLimit20() = runTest(testDispatcher) {
         // Save 20 different bitmaps - use distinct opaque colors that survive JPEG 80%
         // Previous bug: eraseColor(i) with i=1..20 are all transparent near-black (0x00000001)
         // JPEG quantizes them to same bytes -> same SHA-256 hash -> duplicate detection -> count=1
