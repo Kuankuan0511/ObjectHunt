@@ -406,6 +406,189 @@ class PigeonHunterViewModel @Inject constructor(
                 location = current.location,
                 isFetchingLocation = current.isFetchingLocation,
                 result = (current as? PigeonHunterUiState.Success)?.result,
+                saveMessage = (current as? PigeonHunterUiState.Success)?.saveMessage,
+                userQuery = current.userQuery,
+                customAnswer = current.customAnswer
+            )
+
+            try {
+                val result = queueRepository.syncPending(appContext)
+                val afterSync = _uiState.value
+                when (result) {
+                    is DetectionQueueRepository.SyncResult.Synced -> {
+                        if (result.failed > 0) {
+                            try {
+                                com.aai.steel.objecthunt.data.DetectionQueueWorker.enqueue(appContext)
+                            } catch (e: Exception) {
+                                Log.e("PigeonHunterVM", "Failed to enqueue WorkManager retry", e)
+                            }
+                            _uiState.value = PigeonHunterUiState.Success(
+                                bitmap = syncBitmap ?: return@launch,
+                                result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                    ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                savedCount = afterSync.savedCount,
+                                queuedCount = afterSync.queuedCount,
+                                location = afterSync.location,
+                                isFetchingLocation = false,
+                                saveMessage = afterSync.saveMessage,
+                                queueMessage = "Synced ${result.success}, ${result.failed} failed - WorkManager will auto-retry with exponential backoff (CONNECTED), survives reboot",
+                                userQuery = afterSync.userQuery,
+                                customAnswer = afterSync.customAnswer
+                            )
+                        } else {
+                            _uiState.value = when (afterSync) {
+                                is PigeonHunterUiState.SyncingQueue -> PigeonHunterUiState.Success(
+                                    bitmap = syncBitmap ?: return@launch,
+                                    result = afterSync.result ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                    savedCount = afterSync.savedCount,
+                                    queuedCount = afterSync.queuedCount,
+                                    location = afterSync.location,
+                                    isFetchingLocation = false,
+                                    saveMessage = if (result.success > 0) "Synced ${result.success} queued!" else null,
+                                    userQuery = afterSync.userQuery,
+                                    customAnswer = afterSync.customAnswer
+                                )
+                                else -> afterSync.withCounts()
+                            }
+                        }
+                    }
+                    is DetectionQueueRepository.SyncResult.NoNetwork -> {
+                        try {
+                            com.aai.steel.objecthunt.data.DetectionQueueWorker.enqueue(appContext)
+                        } catch (e: Exception) {
+                            Log.e("PigeonHunterVM", "Failed to enqueue WorkManager", e)
+                        }
+                        _uiState.value = PigeonHunterUiState.Success(
+                            bitmap = syncBitmap ?: return@launch,
+                            result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                ?: PigeonDetectionResult(false, null, 0f, null, null, "", ""),
+                            savedCount = afterSync.savedCount,
+                            queuedCount = afterSync.queuedCount,
+                            location = afterSync.location,
+                            isFetchingLocation = false,
+                            queueMessage = "Still offline - WorkManager queued with CONNECTED constraint, will sync after reboot too",
+                            userQuery = afterSync.userQuery,
+                            customAnswer = afterSync.customAnswer
+                        )
+                    }
+                    is DetectionQueueRepository.SyncResult.NothingToSync -> {
+                        _uiState.value = afterSync.withCounts()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("PigeonHunterVM", "Sync failed", e)
+                val after = _uiState.value
+                _uiState.value = PigeonHunterUiState.Error(
+                    bitmap = syncBitmap,
+                    message = "Sync failed: ${e.message}",
+                    savedCount = after.savedCount,
+                    queuedCount = after.queuedCount,
+                    location = after.location,
+                    isFetchingLocation = false,
+                    userQuery = after.userQuery
+                )
+            }
+        }
+    }
+
+        viewModelScope.launch {
+            val syncBitmap = when (current) {
+                is PigeonHunterUiState.Success -> current.bitmap
+                is PigeonHunterUiState.Queued -> current.bitmap
+                else -> null
+            }
+
+            _uiState.value = PigeonHunterUiState.SyncingQueue(
+                bitmap = syncBitmap,
+                savedCount = current.savedCount,
+                queuedCount = current.queuedCount,
+                location = current.location,
+                isFetchingLocation = current.isFetchingLocation,
+                result = (current as? PigeonHunterUiState.Success)?.result,
+                saveMessage = (current as? PigeonHunterUiState.Success)?.saveMessage,
+                userQuery = current.userQuery,
+                customAnswer = current.customAnswer
+            )
+
+            try {
+                val result = queueRepository.syncPending(appContext)
+                val afterSync = _uiState.value
+                when (result) {
+                    is DetectionQueueRepository.SyncResult.Synced -> {
+                        if (result.failed > 0) {
+                            try {
+                                com.aai.steel.objecthunt.data.DetectionQueueWorker.enqueue(appContext)
+                            } catch (e: Exception) {
+                                Log.e("PigeonHunterVM", "Failed to enqueue WorkManager retry", e)
+                            }
+                            _uiState.value = PigeonHunterUiState.Success(
+                                bitmap = syncBitmap ?: return@launch,
+                                result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                    ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                savedCount = afterSync.savedCount,
+                                queuedCount = afterSync.queuedCount,
+                                location = afterSync.location,
+                                isFetchingLocation = false,
+                                saveMessage = afterSync.saveMessage,
+                                queueMessage = "Synced ${result.success}, ${result.failed} failed - WorkManager will auto-retry with exponential backoff (CONNECTED), survives reboot",
+                                userQuery = afterSync.userQuery,
+                                customAnswer = afterSync.customAnswer
+                            )
+                        } else {
+                            _uiState.value = when (afterSync) {
+                                is PigeonHunterUiState.SyncingQueue -> PigeonHunterUiState.Success(
+                                    bitmap = syncBitmap ?: return@launch,
+                                    result = afterSync.result ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                    savedCount = afterSync.savedCount,
+                                    queuedCount = afterSync.queuedCount,
+                                    location = afterSync.location,
+                                    isFetchingLocation = false,
+                                    saveMessage = if (result.success > 0) "Synced ${result.success} queued!" else null,
+                                    userQuery = afterSync.userQuery,
+                                    customAnswer = afterSync.customAnswer
+                                )
+                                else -> afterSync.withCounts()
+                            }
+                        }
+                    }
+                    is DetectionQueueRepository.SyncResult.NoNetwork -> {
+                        try {
+                            com.aai.steel.objecthunt.data.DetectionQueueWorker.enqueue(appContext)
+                        } catch (e: Exception) {
+                            Log.e("PigeonHunterVM", "Failed to enqueue WorkManager", e)
+                        }
+                        _uiState.value = PigeonHunterUiState.Success(
+                            bitmap = syncBitmap ?: return@launch,
+                            result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                ?: PigeonDetectionResult(false, null, 0f, null, null, "", ""),
+                            savedCount = afterSync.savedCount,
+                            queuedCount = afterSync.queuedCount,
+                            location = afterSync.location,
+                            isFetchingLocation = false,
+                            queueMessage = "Still offline - WorkManager queued with CONNECTED constraint, will sync after reboot too",
+                            userQuery = afterSync.userQuery,
+                            customAnswer = afterSync.customAnswer
+                        )
+                    }
+                    is DetectionQueueRepository.SyncResult.NothingToSync -> {
+                        _uiState.value = afterSync.withCounts()
+                    }
+                }
+
+        viewModelScope.launch {
+            val syncBitmap = when (current) {
+                is PigeonHunterUiState.Success -> current.bitmap
+                is PigeonHunterUiState.Queued -> current.bitmap
+                else -> null
+            }
+
+            _uiState.value = PigeonHunterUiState.SyncingQueue(
+                bitmap = syncBitmap,
+                savedCount = current.savedCount,
+                queuedCount = current.queuedCount,
+                location = current.location,
+                isFetchingLocation = current.isFetchingLocation,
+                result = (current as? PigeonHunterUiState.Success)?.result,
                 saveMessage = (current as? PigeonHunterUiState.Success)?.saveMessage
             )
 
@@ -464,6 +647,50 @@ class PigeonHunterViewModel @Inject constructor(
                             location = afterSync.location,
                             isFetchingLocation = false,
                             queueMessage = "Still offline - WorkManager queued with CONNECTED constraint, will sync after reboot too"
+                        )
+                    }
+                    is DetectionQueueRepository.SyncResult.NothingToSync -> {
+                        _uiState.value = afterSync.withCounts()
+                    }
+                }
+                                }
+                            } else {
+                                _uiState.value = PigeonHunterUiState.Success(
+                                    bitmap = syncBitmap ?: return@launch,
+                                    result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                        ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                    savedCount = afterSync.savedCount,
+                                    queuedCount = afterSync.queuedCount,
+                                    location = afterSync.location,
+                                    isFetchingLocation = false,
+                                    saveMessage = "Synced ${result.success} queued!"
+                                )
+                            }
+                        } else {
+                            _uiState.value = when (afterSync) {
+                                is PigeonHunterUiState.SyncingQueue -> PigeonHunterUiState.Success(
+                                    bitmap = syncBitmap ?: return@launch,
+                                    result = afterSync.result ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
+                                    savedCount = afterSync.savedCount,
+                                    queuedCount = afterSync.queuedCount,
+                                    location = afterSync.location,
+                                    isFetchingLocation = false,
+                                    saveMessage = if (result.success > 0) "Synced ${result.success} queued!" else null
+                                )
+                                else -> afterSync.withCounts()
+                            }
+                        }
+                    }
+                    is DetectionQueueRepository.SyncResult.NoNetwork -> {
+                        _uiState.value = PigeonHunterUiState.Success(
+                            bitmap = syncBitmap ?: return@launch,
+                            result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
+                                ?: PigeonDetectionResult(false, null, 0f, null, null, "", ""),
+                            savedCount = afterSync.savedCount,
+                            queuedCount = afterSync.queuedCount,
+                            location = afterSync.location,
+                            isFetchingLocation = false,
+                            queueMessage = "Still offline"
                         )
                     }
                     is DetectionQueueRepository.SyncResult.NothingToSync -> {
