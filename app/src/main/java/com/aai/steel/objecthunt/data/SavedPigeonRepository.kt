@@ -25,15 +25,15 @@ class SavedPigeonRepository(
 
     fun getSavedPigeonsFlow(): Flow<List<PigeonEntity>> = dao.getAllFlow()
 
-    suspend fun getSavedPigeons(): List<PigeonEntity> = withContext(ioDispatcher) { dao.getAll() }
+    suspend fun getSavedPigeons(): List<PigeonEntity> = dao.getAll()
 
-    suspend fun getCount(): Int = withContext(ioDispatcher) { dao.count() }
+    suspend fun getCount(): Int = dao.count()
 
-    suspend fun deleteById(id: Long) = withContext(ioDispatcher) { dao.deleteById(id) }
+    suspend fun deleteById(id: Long) = dao.deleteById(id)
 
-    suspend fun deleteAll() = withContext(ioDispatcher) { dao.deleteAll() }
+    suspend fun deleteAll() = dao.deleteAll()
 
-    suspend fun getByHash(hash: String): PigeonEntity? = withContext(ioDispatcher) { dao.getByHash(hash) }
+    suspend fun getByHash(hash: String): PigeonEntity? = dao.getByHash(hash)
 
     sealed class SaveResult {
         data class Saved(val id: Long) : SaveResult()
@@ -43,24 +43,42 @@ class SavedPigeonRepository(
     /**
      * Save current hunt: bitmap + detection result + city
      * Returns Saved with new id, or AlreadyExists if same image already saved
-     * Duplicate detection via SHA-256 hash of imageBytes
-     * Thread-safe via Mutex to prevent double-save race and limit overrun
+     * Duplicate detection via SHA-256 hash
+     * Only bitmap compress/hash uses IO dispatcher, DAO calls are main-safe (allowMainThreadQueries in tests) and protected by Mutex to prevent race
      */
     suspend fun savePigeon(
         bitmap: Bitmap,
         result: PigeonDetectionResult?,
         city: String?
-    ): SaveResult = withContext(ioDispatcher) {
-        saveMutex.withLock {
-            val imageBytes = bitmapToByteArray(bitmap)
-            val hash = sha256(imageBytes)
+    ): SaveResult = saveMutex.withLock {
+        // Heavy bitmap work off Main, uses injectable dispatcher (testDispatcher in tests)
+        val imageBytes = withContext(ioDispatcher) { bitmapToByteArray(bitmap) }
+        val hash = withContext(ioDispatcher) { sha256(imageBytes) }
 
-            // Check duplicate - inside mutex so concurrent double-tap can't insert twice
-            val existing = dao.getByHash(hash)
-            if (existing != null) {
-                Log.d("SavedPigeonRepo", "Duplicate image detected, hash=$hash, existingId=${existing.id}")
-                return@withLock SaveResult.AlreadyExists(existing.id)
-            }
+        // DAO calls are main-safe via Room and allowMainThreadQueries, no withContext needed, no scheduler mismatch
+        val existing = dao.getByHash(hash)
+        if (existing != null) {
+            Log.d("SavedPigeonRepo", "Duplicate image detected, hash=$hash, existingId=${existing.id}")
+            return@withLock SaveResult.AlreadyExists(existing.id)
+        }
+
+        val entity = PigeonEntity(
+            timestamp = System.currentTimeMillis(),
+            pigeonType = result?.pigeonType,
+            confidence = result?.confidence ?: 0f,
+            features = result?.features,
+            pigeonLocationInImage = result?.location,
+            city = city,
+            description = result?.description ?: "No analysis",
+            rawResponse = result?.rawResponse ?: "",
+            imageBytes = imageBytes,
+            imageHash = hash
+        )
+
+        val insertedId = dao.insertWithLimit(entity, limit = 20)
+        Log.d("SavedPigeonRepo", "Saved pigeon id=$insertedId, hash=$hash, city=$city, type=${result?.pigeonType}, total=${dao.count()}")
+        SaveResult.Saved(insertedId)
+    }
 
             val entity = PigeonEntity(
                 timestamp = System.currentTimeMillis(),

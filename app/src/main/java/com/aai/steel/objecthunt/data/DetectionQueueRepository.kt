@@ -92,42 +92,36 @@ class DetectionQueueRepository(
 
     fun getQueuedFlow(): Flow<List<QueuedDetectionEntity>> = queuedDao.getAllFlow()
 
-    suspend fun getQueuedCount(): Int = withContext(ioDispatcher) { queuedDao.count() }
+    suspend fun getQueuedCount(): Int = queuedDao.count()
 
-    suspend fun getAllQueued(): List<QueuedDetectionEntity> = withContext(ioDispatcher) { queuedDao.getAll() }
+    suspend fun getAllQueued(): List<QueuedDetectionEntity> = queuedDao.getAll()
 
-    // Exposed for ViewModel auto-retry calc and tests
     fun getQueuedDao(): QueuedDetectionDao = queuedDao
 
-    suspend fun deleteAll() = withContext(ioDispatcher) { queuedDao.deleteAll() }
+    suspend fun deleteAll() = queuedDao.deleteAll()
 
     /**
-     * Enqueue a detection request when network is down.
-     * Thread-safe via Mutex + IO dispatcher, withContext outer to avoid holding mutex across switch (deadlock in tests with testDispatcher)
+     * Enqueue when offline - only bitmap compress uses IO dispatcher (injectable), DAO calls are main-safe and mutex-protected
      */
-    suspend fun enqueue(bitmap: Bitmap, city: String?): Long = withContext(ioDispatcher) {
-        queueMutex.withLock {
-            val imageBytes = bitmapToBytes(bitmap)
-            val entity = QueuedDetectionEntity(
-                timestamp = System.currentTimeMillis(),
-                city = city,
-                imageBytes = imageBytes,
-                retryCount = 0,
-                nextRetryAt = System.currentTimeMillis(),
-                status = "PENDING"
-            )
-            val id = queuedDao.insert(entity)
-            Log.d("DetectionQueue", "Enqueued detection id=$id, city=$city, queueSize=${queuedDao.count()}")
-            id
-        }
+    suspend fun enqueue(bitmap: Bitmap, city: String?): Long = queueMutex.withLock {
+        val imageBytes = withContext(ioDispatcher) { bitmapToBytes(bitmap) }
+        val entity = QueuedDetectionEntity(
+            timestamp = System.currentTimeMillis(),
+            city = city,
+            imageBytes = imageBytes,
+            retryCount = 0,
+            nextRetryAt = System.currentTimeMillis(),
+            status = "PENDING"
+        )
+        val id = queuedDao.insert(entity)
+        Log.d("DetectionQueue", "Enqueued detection id=$id, city=$city, queueSize=${queuedDao.count()}")
+        id
     }
 
     /**
-     * Sync pending detections - retry with exponential backoff.
-     * Single-flight via syncMutex + IO dispatcher, withContext outer to avoid deadlock in tests
+     * Sync pending - single-flight via syncMutex, IO dispatcher only for bitmap work, DAO main-safe
      */
-    suspend fun syncPending(context: Context): SyncResult = withContext(ioDispatcher) {
-        syncMutex.withLock {
+    suspend fun syncPending(context: Context): SyncResult = syncMutex.withLock {
             if (!isNetworkAvailable(context)) {
                 Log.d("DetectionQueue", "No network, skipping sync")
                 return@withLock SyncResult.NoNetwork
