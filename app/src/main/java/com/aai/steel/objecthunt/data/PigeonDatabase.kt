@@ -29,13 +29,17 @@ abstract class PigeonDatabase : RoomDatabase() {
             }
         }
 
-        // For tests: in-memory DB
+        // For tests: in-memory DB with synchronous executors so runTest's advanceUntilIdle can control Room work
+        // Room by default uses its own background queryExecutor which is not seen by TestDispatcher -> timeout + Main looper unexecuted runnables
         fun getInMemoryInstance(context: Context): PigeonDatabase {
+            val directExecutor = java.util.concurrent.Executor { it.run() } // runs on calling thread (testDispatcher)
             return Room.inMemoryDatabaseBuilder(
                 context.applicationContext,
                 PigeonDatabase::class.java
             )
-                .allowMainThreadQueries() // for tests only
+                .allowMainThreadQueries()
+                .setQueryExecutor(directExecutor)
+                .setTransactionExecutor(directExecutor)
                 .build()
         }
     }

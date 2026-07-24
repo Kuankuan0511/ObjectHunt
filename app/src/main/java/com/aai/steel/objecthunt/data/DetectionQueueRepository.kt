@@ -101,21 +101,23 @@ class DetectionQueueRepository(
     suspend fun deleteAll() = queuedDao.deleteAll()
 
     /**
-     * Enqueue when offline - only bitmap compress uses IO dispatcher (injectable), DAO calls are main-safe and mutex-protected
+     * Enqueue when offline - bitmap compress on IO dispatcher, then mutex-protected insert. No hold across switch.
      */
-    suspend fun enqueue(bitmap: Bitmap, city: String?): Long = queueMutex.withLock {
+    suspend fun enqueue(bitmap: Bitmap, city: String?): Long {
         val imageBytes = withContext(ioDispatcher) { bitmapToBytes(bitmap) }
-        val entity = QueuedDetectionEntity(
-            timestamp = System.currentTimeMillis(),
-            city = city,
-            imageBytes = imageBytes,
-            retryCount = 0,
-            nextRetryAt = System.currentTimeMillis(),
-            status = "PENDING"
-        )
-        val id = queuedDao.insert(entity)
-        Log.d("DetectionQueue", "Enqueued detection id=$id, city=$city, queueSize=${queuedDao.count()}")
-        id
+        return queueMutex.withLock {
+            val entity = QueuedDetectionEntity(
+                timestamp = System.currentTimeMillis(),
+                city = city,
+                imageBytes = imageBytes,
+                retryCount = 0,
+                nextRetryAt = System.currentTimeMillis(),
+                status = "PENDING"
+            )
+            val id = queuedDao.insert(entity)
+            Log.d("DetectionQueue", "Enqueued detection id=$id, city=$city, queueSize=${queuedDao.count()}")
+            id
+        }
     }
 
     /**

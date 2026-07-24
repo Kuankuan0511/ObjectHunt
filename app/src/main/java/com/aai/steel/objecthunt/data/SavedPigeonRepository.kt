@@ -4,35 +4,30 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import com.aai.steel.objecthunt.PigeonDetectionResult
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 
 /**
- * Repository for saved pigeon hunts - handles conversion from UI state to Entity
- * and enforces max 20 limit via DAO.
- * Handles concurrency via Mutex to prevent race on count+delete+insert.
- * ioDispatcher is injectable so tests can run work on TestDispatcher.
+ * Repository for saved pigeon hunts - handles conversion and max 20 limit.
+ * ioDispatcher injectable so tests can run on TestDispatcher (avoid real IO pool not seen by advanceUntilIdle).
  */
 class SavedPigeonRepository(
     private val dao: PigeonDao,
-    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
-    private val saveMutex = kotlinx.coroutines.sync.Mutex()
+    private val saveMutex = Mutex()
 
     fun getSavedPigeonsFlow(): Flow<List<PigeonEntity>> = dao.getAllFlow()
-
     suspend fun getSavedPigeons(): List<PigeonEntity> = dao.getAll()
-
     suspend fun getCount(): Int = dao.count()
-
     suspend fun deleteById(id: Long) = dao.deleteById(id)
-
     suspend fun deleteAll() = dao.deleteAll()
-
     suspend fun getByHash(hash: String): PigeonEntity? = dao.getByHash(hash)
 
     sealed class SaveResult {
@@ -41,44 +36,24 @@ class SavedPigeonRepository(
     }
 
     /**
-     * Save current hunt: bitmap + detection result + city
-     * Returns Saved with new id, or AlreadyExists if same image already saved
-     * Duplicate detection via SHA-256 hash
-     * Only bitmap compress/hash uses IO dispatcher, DAO calls are main-safe (allowMainThreadQueries in tests) and protected by Mutex to prevent race
+     * Save with duplicate check via SHA-256 hash.
+     * Only bitmap compress/hash uses ioDispatcher (heavy), DAO calls are direct and main-safe via allowMainThreadQueries in tests.
+     * withContext outer, withLock inner avoids holding mutex across dispatcher switch (deadlock with testDispatcher).
      */
     suspend fun savePigeon(
         bitmap: Bitmap,
         result: PigeonDetectionResult?,
         city: String?
-    ): SaveResult = saveMutex.withLock {
-        // Heavy bitmap work off Main, uses injectable dispatcher (testDispatcher in tests)
-        val imageBytes = withContext(ioDispatcher) { bitmapToByteArray(bitmap) }
-        val hash = withContext(ioDispatcher) { sha256(imageBytes) }
+    ): SaveResult = withContext(ioDispatcher) {
+        saveMutex.withLock {
+            val imageBytes = bitmapToByteArray(bitmap)
+            val hash = sha256(imageBytes)
 
-        // DAO calls are main-safe via Room and allowMainThreadQueries, no withContext needed, no scheduler mismatch
-        val existing = dao.getByHash(hash)
-        if (existing != null) {
-            Log.d("SavedPigeonRepo", "Duplicate image detected, hash=$hash, existingId=${existing.id}")
-            return@withLock SaveResult.AlreadyExists(existing.id)
-        }
-
-        val entity = PigeonEntity(
-            timestamp = System.currentTimeMillis(),
-            pigeonType = result?.pigeonType,
-            confidence = result?.confidence ?: 0f,
-            features = result?.features,
-            pigeonLocationInImage = result?.location,
-            city = city,
-            description = result?.description ?: "No analysis",
-            rawResponse = result?.rawResponse ?: "",
-            imageBytes = imageBytes,
-            imageHash = hash
-        )
-
-        val insertedId = dao.insertWithLimit(entity, limit = 20)
-        Log.d("SavedPigeonRepo", "Saved pigeon id=$insertedId, hash=$hash, city=$city, type=${result?.pigeonType}, total=${dao.count()}")
-        SaveResult.Saved(insertedId)
-    }
+            val existing = dao.getByHash(hash)
+            if (existing != null) {
+                Log.d("SavedPigeonRepo", "Duplicate hash=$hash id=${existing.id}")
+                return@withLock SaveResult.AlreadyExists(existing.id)
+            }
 
             val entity = PigeonEntity(
                 timestamp = System.currentTimeMillis(),
@@ -93,9 +68,8 @@ class SavedPigeonRepository(
                 imageHash = hash
             )
 
-            // Enforces max 20 - deletes oldest if needed (atomic via @Transaction + Mutex)
             val insertedId = dao.insertWithLimit(entity, limit = 20)
-            Log.d("SavedPigeonRepo", "Saved pigeon id=$insertedId, hash=$hash, city=$city, type=${result?.pigeonType}, total=${dao.count()}")
+            Log.d("SavedPigeonRepo", "Saved id=$insertedId hash=$hash total=${dao.count()}")
             SaveResult.Saved(insertedId)
         }
     }
@@ -106,23 +80,12 @@ class SavedPigeonRepository(
         return hash.joinToString("") { "%02x".format(it) }
     }
 
-    /**
-     * Reuse same resize logic as PigeonRepository: max 1024px, JPEG 80%
-     */
     private fun bitmapToByteArray(bitmap: Bitmap): ByteArray {
         val maxDimension = 1024
         val scaledBitmap = if (bitmap.width > maxDimension || bitmap.height > maxDimension) {
-            val ratio = minOf(
-                maxDimension.toFloat() / bitmap.width,
-                maxDimension.toFloat() / bitmap.height
-            )
-            val newWidth = (bitmap.width * ratio).toInt()
-            val newHeight = (bitmap.height * ratio).toInt()
-            Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
-        } else {
-            bitmap
-        }
-
+            val ratio = minOf(maxDimension.toFloat() / bitmap.width, maxDimension.toFloat() / bitmap.height)
+            Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt(), (bitmap.height * ratio).toInt(), true)
+        } else bitmap
         val outputStream = ByteArrayOutputStream()
         scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
         return outputStream.toByteArray()
