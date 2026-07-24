@@ -99,7 +99,12 @@ dependencies {
     // Navigation - for saved list screen
     implementation(libs.navigation.compose)
 
+    // WorkManager - canonical offline queue (process death + reboot)
+    implementation(libs.work.runtime.ktx)
+    implementation(libs.hilt.work)
+
     testImplementation(libs.junit)
+    testImplementation(libs.work.testing)
     testImplementation(libs.room.testing)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.robolectric)
