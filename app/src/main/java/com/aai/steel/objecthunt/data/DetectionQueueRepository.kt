@@ -189,7 +189,6 @@ class DetectionQueueRepository(
             }
 
             SyncResult.Synced(successCount, failedCount)
-        }
     }
 
     private suspend fun handleRetryFailure(queued: QueuedDetectionEntity) {
