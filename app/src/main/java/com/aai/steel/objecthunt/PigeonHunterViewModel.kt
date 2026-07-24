@@ -470,50 +470,6 @@ class PigeonHunterViewModel @Inject constructor(
                         _uiState.value = afterSync.withCounts()
                     }
                 }
-                                }
-                            } else {
-                                _uiState.value = PigeonHunterUiState.Success(
-                                    bitmap = syncBitmap ?: return@launch,
-                                    result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
-                                        ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
-                                    savedCount = afterSync.savedCount,
-                                    queuedCount = afterSync.queuedCount,
-                                    location = afterSync.location,
-                                    isFetchingLocation = false,
-                                    saveMessage = "Synced ${result.success} queued!"
-                                )
-                            }
-                        } else {
-                            _uiState.value = when (afterSync) {
-                                is PigeonHunterUiState.SyncingQueue -> PigeonHunterUiState.Success(
-                                    bitmap = syncBitmap ?: return@launch,
-                                    result = afterSync.result ?: PigeonDetectionResult(false, null, 0f, null, null, "Synced", ""),
-                                    savedCount = afterSync.savedCount,
-                                    queuedCount = afterSync.queuedCount,
-                                    location = afterSync.location,
-                                    isFetchingLocation = false,
-                                    saveMessage = if (result.success > 0) "Synced ${result.success} queued!" else null
-                                )
-                                else -> afterSync.withCounts()
-                            }
-                        }
-                    }
-                    is DetectionQueueRepository.SyncResult.NoNetwork -> {
-                        _uiState.value = PigeonHunterUiState.Success(
-                            bitmap = syncBitmap ?: return@launch,
-                            result = (afterSync as? PigeonHunterUiState.SyncingQueue)?.result
-                                ?: PigeonDetectionResult(false, null, 0f, null, null, "", ""),
-                            savedCount = afterSync.savedCount,
-                            queuedCount = afterSync.queuedCount,
-                            location = afterSync.location,
-                            isFetchingLocation = false,
-                            queueMessage = "Still offline"
-                        )
-                    }
-                    is DetectionQueueRepository.SyncResult.NothingToSync -> {
-                        _uiState.value = afterSync.withCounts()
-                    }
-                }
             } catch (e: Exception) {
                 Log.e("PigeonHunterVM", "Sync failed", e)
                 val after = _uiState.value
