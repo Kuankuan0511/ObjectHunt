@@ -273,4 +273,122 @@ class PigeonHunterViewModelTest {
         assertTrue(analyzing is PigeonHunterUiState.Analyzing)
         assertEquals(initial.location, analyzing.location)
     }
+
+    // ---------- Custom query + pigeon-only save ----------
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun updateUserQuery_updatesState() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        viewModel.updateUserQuery("does this picture contain cat?")
+        advanceUntilIdle()
+        assertEquals("does this picture contain cat?", viewModel.uiState.value.userQuery)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun onAskCustom_blankQuery_showsMessage() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        viewModel.onPhotoCaptured(bitmap)
+        advanceUntilIdle() // now Success
+        viewModel.updateUserQuery("") // blank
+        viewModel.onAskCustom()
+        advanceUntilIdle()
+        val state = viewModel.uiState.value
+        assertTrue(state is PigeonHunterUiState.Success)
+        assertTrue((state as PigeonHunterUiState.Success).saveMessage?.contains("Type a question") == true)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun onAskCustom_success_setsCustomAnswer() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        viewModel.onPhotoCaptured(bitmap)
+        advanceUntilIdle() // Success
+
+        viewModel.updateUserQuery("does this picture contain cat?")
+        viewModel.onAskCustom()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertTrue(state is PigeonHunterUiState.Success)
+        val success = state as PigeonHunterUiState.Success
+        assertFalse(success.isAskingCustom)
+        assertNotNull(success.customAnswer)
+        assertTrue(success.customAnswer!!.contains("pigeon", ignoreCase = true) || success.customAnswer!!.contains("cat", ignoreCase = true) || success.customAnswer!!.isNotEmpty())
+        assertEquals("does this picture contain cat?", success.userQuery)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun onSaveCurrent_onlyAllowsPigeon_restrictsNonPigeon() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        // Create repo that returns NO pigeon
+        val noPigeonApi = object : MuseApiService {
+            override suspend fun createResponse(
+                authorization: String,
+                contentType: String,
+                request: MuseApiRequest
+            ): MuseApiResponse {
+                return MuseApiResponse(
+                    id = "test",
+                    output = listOf(
+                        OutputItem(type = "message", content = listOf(OutputContent(type = "output_text", text = "HAS_PIGEON: NO")))
+                    ),
+                    error = null,
+                    usage = null
+                )
+            }
+        }
+        val noPigeonRepo = PigeonRepository(noPigeonApi, "key", "model")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val vm = PigeonHunterViewModel(
+            repository = noPigeonRepo,
+            savedRepository = SavedPigeonRepository(db.pigeonDao(), ioDispatcher = testDispatcher),
+            queueRepository = DetectionQueueRepository(db.queuedDetectionDao(), noPigeonRepo, SavedPigeonRepository(db.pigeonDao(), ioDispatcher = testDispatcher), ioDispatcher = testDispatcher),
+            networkMonitor = object : NetworkMonitor(context) {
+                override fun isCurrentlyAvailable(): Boolean = true
+                override fun observe() = kotlinx.coroutines.flow.flowOf(true)
+            },
+            appContext = context
+        )
+        advanceUntilIdle()
+        val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        vm.onPhotoCaptured(bitmap)
+        advanceUntilIdle()
+
+        val success = vm.uiState.value
+        assertTrue(success is PigeonHunterUiState.Success)
+        assertFalse((success as PigeonHunterUiState.Success).result.hasPigeon)
+
+        // Try to save - should be blocked, count stays 0, message says can't save
+        vm.onSaveCurrent()
+        advanceUntilIdle()
+
+        val afterSaveAttempt = vm.uiState.value
+        assertTrue(afterSaveAttempt is PigeonHunterUiState.Success)
+        assertEquals(0, afterSaveAttempt.savedCount)
+        assertTrue((afterSaveAttempt as PigeonHunterUiState.Success).saveMessage?.contains("Can't save") == true)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun onSaveCurrent_allowsPigeon_saves() = runTest(testDispatcher) {
+        advanceUntilIdle()
+        val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        viewModel.onPhotoCaptured(bitmap)
+        advanceUntilIdle()
+
+        val success = viewModel.uiState.value as PigeonHunterUiState.Success
+        assertTrue(success.result.hasPigeon)
+
+        viewModel.onSaveCurrent()
+        advanceUntilIdle()
+
+        val after = viewModel.uiState.value
+        assertTrue(after is PigeonHunterUiState.Success)
+        assertEquals(1, after.savedCount)
+    }
 }

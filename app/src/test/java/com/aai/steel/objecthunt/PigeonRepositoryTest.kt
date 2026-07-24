@@ -253,4 +253,75 @@ class PigeonRepositoryTest {
         assertFalse(result.hasPigeon)
         assertEquals(0.1f, result.confidence, 0.01f)
     }
+
+    // ---------- askCustom ----------
+
+    @Test
+    fun askCustom_returnsAnswer() = runTest {
+        val answerApi = object : MuseApiService {
+            override suspend fun createResponse(
+                authorization: String,
+                contentType: String,
+                request: MuseApiRequest
+            ): MuseApiResponse {
+                return MuseApiResponse(
+                    id = "test",
+                    output = listOf(
+                        OutputItem(
+                            type = "message",
+                            content = listOf(OutputContent(type = "output_text", text = "Yes, this picture contains a cat, grey color"))
+                        )
+                    ),
+                    error = null,
+                    usage = null
+                )
+            }
+        }
+        val repo = PigeonRepository(answerApi, "key", "model")
+        val answer = repo.askCustom(Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888), "does this picture contain cat?")
+        assertTrue(answer.contains("cat", ignoreCase = true))
+    }
+
+    @Test
+    fun askCustom_retriesOnRetryableThenSucceeds() = runTest {
+        var callCount = 0
+        val api = object : MuseApiService {
+            override suspend fun createResponse(
+                authorization: String,
+                contentType: String,
+                request: MuseApiRequest
+            ): MuseApiResponse {
+                callCount++
+                if (callCount == 1) throw java.io.IOException("timeout")
+                return MuseApiResponse(
+                    id = "test",
+                    output = listOf(
+                        OutputItem(type = "message", content = listOf(OutputContent(type = "output_text", text = "No, no cat here")))
+                    ),
+                    error = null,
+                    usage = null
+                )
+            }
+        }
+        val repo = PigeonRepository(api, "key", "model")
+        val answer = repo.askCustom(Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888), "cat?")
+        assertEquals(2, callCount)
+        assertTrue(answer.contains("no cat", ignoreCase = true))
+    }
+
+    @Test
+    fun askCustom_handlesApiError() = runTest {
+        val errorApi = object : MuseApiService {
+            override suspend fun createResponse(
+                authorization: String,
+                contentType: String,
+                request: MuseApiRequest
+            ): MuseApiResponse {
+                return MuseApiResponse(id = "test", output = null, error = ApiError("invalid_api_key", "bad"), usage = null)
+            }
+        }
+        val repo = PigeonRepository(errorApi, "key", "model")
+        val answer = repo.askCustom(Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888), "question")
+        assertTrue(answer.contains("API Error"))
+    }
 }
