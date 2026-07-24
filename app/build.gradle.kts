@@ -119,6 +119,7 @@ dependencies {
     // KSP - Room + Hilt compilers
     ksp(libs.room.compiler)
     ksp(libs.hilt.compiler)
+    ksp(libs.androidx.hilt.compiler) // Needed for @HiltWorker from androidx.hilt, separate from dagger hilt-compiler
     // Force javapoet to fix hiltAggregateDepsDebug NoSuchMethodError canonicalName()
     ksp("com.squareup:javapoet:1.13.0")
 }
