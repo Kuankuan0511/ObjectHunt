@@ -116,12 +116,10 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
-    // KSP - Room + Hilt compilers
+    // KSP - Room (2.6.1) + Hilt (Dagger + AndroidX) compilers - all 3 needed
     ksp(libs.room.compiler)
-    ksp(libs.hilt.compiler)
-    ksp(libs.androidx.hilt.compiler) // Needed for @HiltWorker from androidx.hilt, separate from dagger hilt-compiler
-    // Force javapoet to fix hiltAggregateDepsDebug NoSuchMethodError canonicalName()
-    ksp("com.squareup:javapoet:1.13.0")
+    ksp(libs.hilt.compiler) // com.google.dagger:hilt-compiler for @HiltViewModel, @Module
+    ksp(libs.androidx.hilt.compiler) // androidx.hilt:hilt-compiler for @HiltWorker, separate processor
 }
 
 // Fix javapoet version conflict: Room + Hilt both bring javapoet, Gradle picks older without canonicalName()
