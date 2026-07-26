@@ -47,20 +47,24 @@ class DetectionQueueWorkerTest {
         context = ApplicationProvider.getApplicationContext()
         db = PigeonDatabase.getInMemoryInstance(context)
 
-        // Initialize WorkManager for tests with synchronous executors
+        // Use WorkManagerTestInitHelper for Robolectric - WorkManager.initialize() tries to read R.bool resources that don't exist -> Resource ID #0x7f040005
         val config = Configuration.Builder()
             .setMinimumLoggingLevel(android.util.Log.DEBUG)
             .setExecutor(java.util.concurrent.Executor { it.run() })
             .setTaskExecutor(java.util.concurrent.Executor { it.run() })
             .build()
-        WorkManager.initialize(context, config)
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
     }
 
     @After
     fun tearDown() {
         db.close()
-        // WorkManager test cleanup
-        WorkManager.getInstance(context).cancelAllWork()
+        // WorkManager test cleanup - Test init helper doesn't need cancel, but try
+        try {
+            WorkManager.getInstance(context).cancelAllWork()
+        } catch (e: Exception) {
+            // may fail if not initialized, ignore for tests
+        }
     }
 
     private fun createFakePigeonRepoSuccess(): PigeonRepository {
