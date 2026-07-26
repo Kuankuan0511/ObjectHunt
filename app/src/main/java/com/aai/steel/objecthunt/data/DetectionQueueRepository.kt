@@ -30,7 +30,8 @@ class DetectionQueueRepository(
     private val queuedDao: QueuedDetectionDao,
     private val pigeonRepository: PigeonRepository,
     private val savedRepository: SavedPigeonRepository,
-    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    private val networkChecker: (Context) -> Boolean = { ctx -> isNetworkAvailable(ctx) }
 ) {
     // Mutex to protect concurrent access to queue - prevents race conditions
     private val queueMutex = Mutex()
@@ -130,7 +131,7 @@ class DetectionQueueRepository(
                 return@withLock SyncResult.NothingToSync
             }
 
-            if (!isNetworkAvailable(context)) {
+            if (!networkChecker(context)) {
                 Log.d("DetectionQueue", "No network, skipping sync")
                 return@withLock SyncResult.NoNetwork
             }

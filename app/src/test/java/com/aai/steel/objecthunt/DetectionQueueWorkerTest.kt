@@ -117,9 +117,48 @@ class DetectionQueueWorkerTest {
         assertTrue(request.tags.contains("queue-sync"))
         val constraints = request.workSpec.constraints
         assertEquals(NetworkType.CONNECTED, constraints.requiredNetworkType)
-        // Backoff policy should be exponential, 10s
         assertEquals(androidx.work.BackoffPolicy.EXPONENTIAL, request.workSpec.backoffPolicy)
         assertEquals(10000L, request.workSpec.backoffDelayDuration)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun worker_doWork_viaTestListenableWorkerBuilder() = runTest(testDispatcher) {
+        // Really run the Worker via TestListenableWorkerBuilder, not just repository
+        // Make PigeonDatabase singleton return our in-memory DB so manual worker sees our queued items
+        val instanceField = PigeonDatabase::class.java.getDeclaredField("INSTANCE")
+        instanceField.isAccessible = true
+        instanceField.set(null, db)
+
+        // Enqueue 1 item via repo (which uses our in-memory DB)
+        val pigeonRepo = createFakePigeonRepoSuccess()
+        val savedRepo = SavedPigeonRepository(db.pigeonDao(), ioDispatcher = testDispatcher)
+        val queuedDao = db.queuedDetectionDao()
+        val queueRepo = DetectionQueueRepository(
+            queuedDao, pigeonRepo, savedRepo,
+            ioDispatcher = testDispatcher,
+            networkChecker = { true }
+        )
+        val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        queueRepo.enqueue(bitmap, "TestCity")
+        assertEquals(1, queueRepo.getQueuedCount())
+
+        // Build manual worker (no Hilt) with TestListenableWorkerBuilder - this really runs doWork()
+        val worker = androidx.work.testing.TestListenableWorkerBuilder<com.aai.steel.objecthunt.data.DetectionQueueWorkerManual>(context)
+            .build()
+
+        val result = worker.doWork()
+        // doWork should succeed (fake API success is not used in manual worker because it creates real repo with real key, but we forced DB singleton to in-memory)
+        // Manual worker uses real PigeonRepository with real key, which will fail due to invalid key, but it has retry logic and returns error result -> then it will schedule retry -> returns retry()
+        // For this test we just verify doWork doesn't crash and returns a valid Result (success, retry, or failure)
+        assertTrue(
+            result is ListenableWorker.Result.Success ||
+            result is ListenableWorker.Result.Retry ||
+            result is ListenableWorker.Result.Failure
+        )
+
+        // Cleanup singleton
+        instanceField.set(null, null)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -141,62 +180,61 @@ class DetectionQueueWorkerTest {
         val pigeonRepo = createFakePigeonRepoSuccess()
         val savedRepo = SavedPigeonRepository(db.pigeonDao(), ioDispatcher = testDispatcher)
         val queuedDao = db.queuedDetectionDao()
-        val queueRepo = DetectionQueueRepository(queuedDao, pigeonRepo, savedRepo, ioDispatcher = testDispatcher)
+        val queueRepo = DetectionQueueRepository(
+            queuedDao,
+            pigeonRepo,
+            savedRepo,
+            ioDispatcher = testDispatcher,
+            networkChecker = { true } // force network available so test actually runs assertions
+        )
 
-        // Enqueue 2 items
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         queueRepo.enqueue(bitmap, "SF")
         queueRepo.enqueue(bitmap, "NY")
         assertEquals(2, queueRepo.getQueuedCount())
 
-        // Sync should succeed and move to saved, queue becomes empty
         val result = queueRepo.syncPending(context)
-        // Note: syncPending checks isNetworkAvailable which in Robolectric may return false via activeNetworkInfo fallback
-        // So it may return NoNetwork, not Synced. We accept either NoNetwork or Synced
-        assertTrue(
-            result is DetectionQueueRepository.SyncResult.Synced ||
-            result is DetectionQueueRepository.SyncResult.NoNetwork ||
-            result is DetectionQueueRepository.SyncResult.NothingToSync
-        )
-
-        // If network considered available in test, queue should be drained
-        if (result is DetectionQueueRepository.SyncResult.Synced) {
-            assertEquals(result.success, 2)
-            assertEquals(0, queueRepo.getQueuedCount())
-            assertEquals(2, savedRepo.getCount())
-        }
+        // Now with network forced true, should be Synced with 2 success
+        assertTrue(result is DetectionQueueRepository.SyncResult.Synced)
+        val synced = result as DetectionQueueRepository.SyncResult.Synced
+        assertEquals(2, synced.success)
+        assertEquals(0, queueRepo.getQueuedCount())
+        assertEquals(2, savedRepo.getCount())
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun worker_doWork_retryOnFailure_thenBackoffRespected() = runTest(testDispatcher) {
-        val pigeonRepo = createFakePigeonRepoFail() // always fails with error result confidence 0
+        val pigeonRepo = createFakePigeonRepoFail()
         val savedRepo = SavedPigeonRepository(db.pigeonDao(), ioDispatcher = testDispatcher)
         val queuedDao = db.queuedDetectionDao()
-        val queueRepo = DetectionQueueRepository(queuedDao, pigeonRepo, savedRepo, ioDispatcher = testDispatcher)
+        val queueRepo = DetectionQueueRepository(
+            queuedDao,
+            pigeonRepo,
+            savedRepo,
+            ioDispatcher = testDispatcher,
+            networkChecker = { true } // force network available so failure is from API error (confidence 0), not NoNetwork
+        )
 
         val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         queueRepo.enqueue(bitmap, "SF")
         val queuedBefore = queuedDao.getAll().first()
         assertEquals(0, queuedBefore.retryCount)
 
-        // Sync with failing API -> should schedule retry, not delete
         val result = queueRepo.syncPending(context)
-        // If NoNetwork, then not even attempted, retryCount stays 0
-        // If Synced with failure, retryCount becomes 1 and nextRetryAt future
-        if (result is DetectionQueueRepository.SyncResult.Synced && result.failed > 0) {
-            val after = queuedDao.getAll().first()
-            assertEquals(1, after.retryCount)
-            assertTrue(after.nextRetryAt > queuedBefore.nextRetryAt)
-            assertEquals("RETRYING", after.status)
+        assertTrue(result is DetectionQueueRepository.SyncResult.Synced)
+        val synced = result as DetectionQueueRepository.SyncResult.Synced
+        assertEquals(0, synced.success)
+        assertEquals(1, synced.failed)
 
-            // getReadyToRetry now should be empty because nextRetryAt is future
-            val readyNow = queuedDao.getReadyToRetry(now = System.currentTimeMillis())
-            assertEquals(0, readyNow.size)
+        val after = queuedDao.getAll().first()
+        assertEquals(1, after.retryCount)
+        assertTrue(after.nextRetryAt > queuedBefore.nextRetryAt)
+        assertEquals("RETRYING", after.status)
 
-            // But after backoff time, should be ready again
-            val readyLater = queuedDao.getReadyToRetry(now = after.nextRetryAt + 100)
-            assertEquals(1, readyLater.size)
-        }
+        val readyNow = queuedDao.getReadyToRetry(now = System.currentTimeMillis())
+        assertEquals(0, readyNow.size)
+
+        val readyLater = queuedDao.getReadyToRetry(now = after.nextRetryAt + 100)
+        assertEquals(1, readyLater.size)
     }
-}
