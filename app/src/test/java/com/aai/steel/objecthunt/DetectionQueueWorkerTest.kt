@@ -238,3 +238,4 @@ class DetectionQueueWorkerTest {
         val readyLater = queuedDao.getReadyToRetry(now = after.nextRetryAt + 100)
         assertEquals(1, readyLater.size)
     }
+}
