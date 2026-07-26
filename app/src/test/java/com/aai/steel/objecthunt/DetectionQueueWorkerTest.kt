@@ -188,13 +188,18 @@ class DetectionQueueWorkerTest {
             networkChecker = { true } // force network available so test actually runs assertions
         )
 
-        val bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
-        queueRepo.enqueue(bitmap, "SF")
-        queueRepo.enqueue(bitmap, "NY")
+        // Use distinct colors so hashes differ - previous bug: same black bitmap twice -> same hash -> duplicate -> saved 1 not 2
+        val bitmap1 = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(255, 0, 0))
+        }
+        val bitmap2 = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(0, 255, 0))
+        }
+        queueRepo.enqueue(bitmap1, "SF")
+        queueRepo.enqueue(bitmap2, "NY")
         assertEquals(2, queueRepo.getQueuedCount())
 
         val result = queueRepo.syncPending(context)
-        // Now with network forced true, should be Synced with 2 success
         assertTrue(result is DetectionQueueRepository.SyncResult.Synced)
         val synced = result as DetectionQueueRepository.SyncResult.Synced
         assertEquals(2, synced.success)
