@@ -124,15 +124,15 @@ class DetectionQueueRepository(
      * Sync pending - single-flight via syncMutex, IO dispatcher only for bitmap work, DAO main-safe
      */
     suspend fun syncPending(context: Context): SyncResult = syncMutex.withLock {
-            if (!isNetworkAvailable(context)) {
-                Log.d("DetectionQueue", "No network, skipping sync")
-                return@withLock SyncResult.NoNetwork
-            }
-
             val ready = queuedDao.getReadyToRetry()
             if (ready.isEmpty()) {
                 Log.d("DetectionQueue", "No queued detections ready")
                 return@withLock SyncResult.NothingToSync
+            }
+
+            if (!isNetworkAvailable(context)) {
+                Log.d("DetectionQueue", "No network, skipping sync")
+                return@withLock SyncResult.NoNetwork
             }
 
             Log.d("DetectionQueue", "Syncing ${ready.size} queued detections")
